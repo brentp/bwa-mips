@@ -55,7 +55,8 @@ class Bam(object):
         try:
             self.mapq = int(self.mapq)
         except ValueError:
-            return 0
+            pass
+
     def __str__(self):
         return "\t".join(str(getattr(self, s)) for s in self.__slots__[:11]) \
                 + "\t" + "\t".join(self.other)
@@ -416,8 +417,7 @@ def fqiter(fq, n=4):
         while True:
             rec = [x.strip('\r\n') for x in islice(fh, n)]
             if not rec: raise StopIteration
-            assert all(rec)
-            assert len(rec) == 4
+            assert all(rec) and len(rec) == 4
             yield rec
 def main():
     p = argparse.ArgumentParser(description=__doc__,
