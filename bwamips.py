@@ -171,13 +171,31 @@ class Bam(object):
 
         self.cigar = "".join("%i%s" % tuple(t) for t in new_cigs[::-1])
 
+def get_base(fq1, fq2, _again=True):
+    def base(f):
+        return op.basename(f).replace('.gz', '')\
+                .replace('.fastq', '').replace('.fq', '')
+
+    name = "".join([x[0] for x in takewhile(lambda (a, b): a == b, \
+                                           zip(base(fq1), base(fq2)))])
+    name = name.rstrip("_")
+    if name.endswith("_R"): name = name[:-2]
+    if len(name) < 3 and _again:
+        print >>sys.stderr, "flipping", name
+        return get_base(base(fq1)[::-1], base(fq2)[::-1], False)
+    name = (name if _again else name[::-1]).lstrip("._-")
+    print >>sys.stderr, "using", name
+    return name
+
 def move_umi(fqs, output_dir):
     fq1, fq2 = fqs
-    f1_out = nopen("{output_dir}/{base}.fastq.gz".format(output_dir=output_dir,
-                base=op.basename(fq1).rsplit(".", 2)[0]), 'w')
-    f2_out = nopen("{output_dir}/{base}.fastq.gz".format(output_dir=output_dir,
-                base=op.basename(fq2).rsplit(".", 2)[0]), 'w')
+    base = get_base(fq1, fq2)
+    f1_out = nopen("{output_dir}/{base}_R1.fastq.gz".format(output_dir=output_dir,
+                base=base), 'w')
+    f2_out = nopen("{output_dir}/{base}_R2.fastq.gz".format(output_dir=output_dir,
+                base=base), 'w')
 
+    # NOTE: umi hard-coded to 5 bases.
     for r1, r2 in izip(fqiter(fq1), fqiter(fq2)):
         assert len(r1) == 4
         assert len(r2) == 4
@@ -185,8 +203,8 @@ def move_umi(fqs, output_dir):
         r2[1] = r2[1][5:]
         r2[3] = r2[3][5:]
 
-        r1[0] = r1[0].rsplit(" ", 1)[0].rsplit(":", 1)[0] + ":" + umi
-        r2[0] = r2[0].rsplit(" ", 1)[0].rsplit(":", 1)[0] + ":" + umi
+        r1[0] = r1[0].rsplit(" ", 1)[0].rsplit(":", 1)[0] + ":" + umi + "/1"
+        r2[0] = r2[0].rsplit(" ", 1)[0].rsplit(":", 1)[0] + ":" + umi + "/2"
         assert not any("\n" in l for l in r1)
         assert not any("\n" in l for l in r2)
         print >>f1_out, "\n".join(r1)
@@ -337,14 +355,10 @@ def revcomp(seq, tbl=maketrans('ACGT', 'TGCA')):
 def bwamips(fastqs, ref_fasta, mips, output_dir, num_cores=NUM_CORES,
         umi_fn=move_umi):
 
-    def base(f):
-        return op.basename(f).replace('.gz', '').replace('.fastq',
-                '').replace('.fq', '')
     #"""
     fq1, fq2 = move_umi(fastqs, output_dir)
 
-    name = "".join([x[0] for x in takewhile(lambda (a, b): a == b, zip(base(fq1), base(fq2)))])
-    if name.endswith("_R"): name = name[:-2]
+    name = get_base(fq1, fq2)
 
     bam = bwa_mem((fq1, fq2), name, ref_fasta, output_dir, num_cores)
     """
@@ -382,13 +396,13 @@ def dedup_sam(sam_iter, umi_fn, out=sys.stdout, mips_file=''):
             rgroup = [r[2] for r in umi_group]
             counts.update([len(rgroup)])
             if len(rgroup) == 1:
-                print >>out, str(aln)
+                print >>out, str(rgroup[0])
                 break
             rgroup = sorted(rgroup, key=attrgetter('mapq'), reverse=True)
             best, others = rgroup[0], rgroup[1:]
             # TODO adjust base-quality of best if the others do no match.
-            if set([o.cigar for o in others]) != set([best.cigar]):
-                print cpos, best.cigar, [o.cigar for o in others]
+            if best.cigar != '*' and set([o.cigar for o in others if o.cigar != '*']) != set([best.cigar]):
+                print cpos, best.cigar, [o.cigar for o in others], best.is_first_read(), best.is_plus_read()
             # print the read with the highest quality
             for i, aln in enumerate(rgroup):
                 if i > 0:
@@ -406,6 +420,7 @@ def bwa_mem(fastqs, name, ref_fasta, output_dir, num_cores):
            "- {output_dir}/{name}")
 
     rg = "'@RG\\tID:%s\\tSM:%s'" % (name, name)
+    print >>sys.stderr, cmd
     bam = "{output_dir}/{name}.bam".format(**locals())
 
     try:
@@ -420,8 +435,9 @@ def bwa_mem(fastqs, name, ref_fasta, output_dir, num_cores):
 
 def fqiter(fq, n=4):
     with nopen(fq) as fh:
+        fqclean = (x.strip("\r\n") for x in fh if x.strip())
         while True:
-            rec = [x.strip('\r\n') for x in islice(fh, n)]
+            rec = [x for x in islice(fqclean, n)]
             if not rec: raise StopIteration
             assert all(rec) and len(rec) == 4
             yield rec
