@@ -375,18 +375,24 @@ def dedup_sam(sam_iter, umi_fn, out=sys.stdout, mips_file=''):
     #sam_iter_ = chain([Bam(line.split("\t"))], (Bam(x.strip().split("\t")) for x in sam_iter))
     sam_iter_ = (Bam(x.strip().split("\t")) for x in sam_iter)
     for cpos, reads in groupby(sam_iter_, lambda r: (r.chrom, r.pos)):
-        ureads = sorted((umi_fn(r.read), r) for r in reads)
+        ureads = sorted((r.is_first_read(), umi_fn(r.read), r) for r in reads)
 
         # group to reads with the same umi at that position
         for umi, umi_group in groupby(ureads, key=itemgetter(0)):
-            rgroup = [r[1] for r in umi_group]
-            # print the read with the highest quality
+            rgroup = [r[2] for r in umi_group]
             counts.update([len(rgroup)])
-            for i, aln in enumerate(sorted(rgroup,
-                key=attrgetter('mapq'), reverse=True)):
+            if len(rgroup) == 1:
+                print >>out, str(aln)
+                break
+            rgroup = sorted(rgroup, key=attrgetter('mapq'), reverse=True)
+            best, others = rgroup[0], rgroup[1:]
+            # TODO adjust base-quality of best if the others do no match.
+            if set([o.cigar for o in others]) != set([best.cigar]):
+                print cpos, best.cigar, [o.cigar for o in others]
+            # print the read with the highest quality
+            for i, aln in enumerate(rgroup):
                 if i > 0:
                     aln.flag |= 0x400 # PCR or optical duplicate
-                    pass
                 print >>out, str(aln)
     print >>sys.stderr, counts.most_common(20)
 
