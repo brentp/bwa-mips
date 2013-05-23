@@ -42,10 +42,6 @@ BARCODE_LENGTH = 5
 MAX_READ_LENGTH = 152
 VERSION = 0.1
 
-def string_dist(astr, bstr):
-    assert len(astr) == len(bstr), (astr, bstr)
-    return sum(a != b for a, b in izip(astr, bstr))
-
 class Bam(object):
     __slots__ = 'read flag chrom pos mapq cigar chrom_mate pos_mate tlen \
             seq qual other'.split()
