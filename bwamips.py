@@ -57,6 +57,10 @@ class Bam(object):
         except ValueError:
             pass
 
+    def __repr__(self):
+        return "Bam({chr}:{start}:{read}".format(chr=self.chrom,
+                start=self.pos, read=self.read)
+
     def __str__(self):
         return "\t".join(str(getattr(self, s)) for s in self.__slots__[:11]) \
                 + "\t" + "\t".join(self.other)
@@ -184,7 +188,6 @@ def get_base(fq1, fq2, _again=True):
         print >>sys.stderr, "flipping", name
         return get_base(base(fq1)[::-1], base(fq2)[::-1], False)
     name = (name if _again else name[::-1]).lstrip("._-")
-    print >>sys.stderr, "using", name
     return name
 
 def move_umi(fqs, output_dir):
@@ -300,6 +303,7 @@ def dearm_bam(bam, mips_file):
             idx = 3
 
         # allow some wiggle room
+        mip = None
         for offset in [0, -1, 1]:
             mips[lookup_field]
             try:
@@ -345,21 +349,20 @@ def dearm_bam(bam, mips_file):
 
     print >>sys.stderr, "found %i MIPs" % n
     print >>sys.stderr, "counts", counts
-    print >>sys.stderr, "total reads", k
 
 def bwamips(fastqs, ref_fasta, mips, output_dir, num_cores=NUM_CORES,
         umi_fn=move_umi):
 
-    #"""
+    """
     fq1, fq2 = move_umi(fastqs, output_dir)
 
     name = get_base(fq1, fq2)
 
     bam = bwa_mem((fq1, fq2), name, ref_fasta, output_dir, num_cores)
     """
-    name = "test"
-    bam = "tmp/t.bam"
-    """
+    name = "testing"
+    bam = "tmp/NJ30-2041-72_S72_L001.bam"
+    #"""
     sam_out = open('{output_dir}/{name}.sam'.format(**locals()), 'w')
     bam3 = dedup_sam(dearm_bam(bam, mips), get_umi, sam_out, mips)
     sam_out.close()
@@ -371,7 +374,6 @@ def dedup_sam(sam_iter, get_umi_fn, out=sys.stdout, mips_file=''):
     for line in sam_iter:
         if not line.startswith("@"):
             break
-        j += 1
         print >>out, line
 
     args = " ".join(sys.argv)
@@ -384,28 +386,39 @@ def dedup_sam(sam_iter, get_umi_fn, out=sys.stdout, mips_file=''):
     counts = Counter()
     # add back the last line
     #sam_iter_ = chain([Bam(line.split("\t"))], (Bam(x.strip().split("\t")) for x in sam_iter))
-    sam_iter_ = (Bam(x.strip().split("\t")) for x in sam_iter)
-    for cpos, reads in groupby(sam_iter_, lambda r: (r.chrom, r.pos)):
-        ureads = sorted((r.is_first_read(), get_umi_fn(r), r) for r in reads)
+    sorted_iter = sorted([Bam(x.strip().split("\t")) for x in sam_iter],
+                        key=lambda r: (r.chrom, r.pos, get_umi_fn(r)))
+    q = 0
+    for cpos, reads in groupby(sorted_iter, lambda r: (r.chrom, r.pos, get_umi_fn(r))):
+        reads = list(reads)
+
+        if cpos[0] != "*":
+            q += len(reads)
+            j += len(reads)
+            for r in reads:
+                print >>out, r
+            continue
+
+        reads1 = [r for r in reads if r.is_first_read()]
+        reads2 = [r for r in reads if r.is_second_read()]
+        assert len(reads1) + len(reads2) == len(reads)
 
         # group to reads with the same umi at that position
-        for umi, umi_group in groupby(ureads, key=itemgetter(0)):
-            rgroup = [r[2] for r in umi_group]
-            counts.update([len(rgroup)])
-            if len(rgroup) == 1:
-                print >>out, str(rgroup[0])
-                break
-            rgroup = sorted(rgroup, key=attrgetter('mapq'), reverse=True)
+        for readset in (reads1, reads2):
+            """
             best, others = rgroup[0], rgroup[1:]
             # TODO adjust base-quality of best if the others do no match.
             if best.cigar != '*' and set([o.cigar for o in others if o.cigar != '*']) != set([best.cigar]):
                 print cpos, best.cigar, [o.cigar for o in others], best.is_first_read(), best.is_plus_read()
+            """
             # print the read with the highest quality
-            for i, aln in enumerate(rgroup):
-                if i > 0:
+            counts.update([len(readset)])
+            j += len(readset)
+            for ir, aln in enumerate(sorted(readset, key=attrgetter('mapq'))):
+                if ir > 0:
                     aln.flag |= 0x400 # PCR or optical duplicate
                 print >>out, str(aln)
-                j += 1
+
     print >>sys.stderr, counts.most_common(20)
     print >>sys.stderr, "wrote %i reads" % j
 
