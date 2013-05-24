@@ -447,10 +447,10 @@ def main():
     p.add_argument('--output-dir', help='output directory')
     p.add_argument('ref_fasta', help='reference fasta already index by bwa 0.7.4+')
     p.add_argument('mips', help='mips file')
-    p.add_argument('fastqs', nargs=2, help='fastqs', metavar=('R1', 'R2'))
+    p.add_argument('fastqs', nargs=2, metavar=('FQ1 FQ2'))
     args = p.parse_args()
 
-    for f in (args.ref_fasta, args.mips, args.fastqs[1], args.fastqs[1],
+    for f in (args.ref_fasta, args.mips, args.fastqs[0], args.fastqs[1],
               args.ref_fasta + ".sa"):
         if not op.exists(f):
             print >>sys.stderr, "%s missing" % f
