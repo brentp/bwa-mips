@@ -190,13 +190,7 @@ def get_base(fq1, fq2, _again=True):
     name = (name if _again else name[::-1]).lstrip("._-")
     return name
 
-def move_umi(fqs, output_dir):
-    fq1, fq2 = fqs
-    base = get_base(fq1, fq2)
-    f1_out = nopen("{output_dir}/{base}_R1.fastq.gz".format(output_dir=output_dir,
-                base=base), 'w')
-    f2_out = nopen("{output_dir}/{base}_R2.fastq.gz".format(output_dir=output_dir,
-                base=base), 'w')
+def move_tag(fq1, fq2):
 
     # NOTE: umi hard-coded to 5 bases.
     for r1, r2 in izip(fqiter(fq1), fqiter(fq2)):
@@ -206,15 +200,15 @@ def move_umi(fqs, output_dir):
         r2[1] = r2[1][5:]
         r2[3] = r2[3][5:]
 
-        r1[0] = r1[0].rsplit(" ", 1)[0].rsplit(":", 1)[0] + ":" + umi + "/1"
-        r2[0] = r2[0].rsplit(" ", 1)[0].rsplit(":", 1)[0] + ":" + umi + "/2"
+        # use bwa's comment stuff to send this to the alignment.
+        r1[0] = r1[0].split(" ", 1)[0] + " BC:Z:" + umi
+        r2[0] = r2[0].split(" ", 1)[0] + " BC:Z:" + umi
         assert not any("\n" in l for l in r1)
         assert not any("\n" in l for l in r2)
-        print >>f1_out, "\n".join(r1)
-        print >>f2_out, "\n".join(r2)
+        print "\n".join(r1)
+        print "\n".join(r2)
 
-    f1_out.close(); f2_out.close()
-    return f1_out.name, f2_out.name
+    return 0
 
 def get_umi(read):
     return next(o for o in read.other if o.startswith("BC:Z:"))
@@ -268,10 +262,6 @@ def dearm_bam(bam, mips_file):
     n = 0
     counts = [0, 0, 0, 0]
     for k, aln in enumerate(bam_iter):
-        # put barcode in tags and remove from name
-        aln.read, bc = aln.read.rsplit(":", 1)
-        aln.other.append("BC:Z:%s" % bc)
-
         if not aln.is_mapped():
             yield str(aln)
             continue
@@ -350,19 +340,15 @@ def dearm_bam(bam, mips_file):
     print >>sys.stderr, "found %i MIPs" % n
     print >>sys.stderr, "counts", counts
 
-def bwamips(fastqs, ref_fasta, mips, output_dir, num_cores=NUM_CORES,
-        umi_fn=move_umi):
+def bwamips(fastqs, ref_fasta, mips, output_dir, num_cores=NUM_CORES):
 
-    """
-    fq1, fq2 = move_umi(fastqs, output_dir)
-
-    name = get_base(fq1, fq2)
-
-    bam = bwa_mem((fq1, fq2), name, ref_fasta, output_dir, num_cores)
+    #"""
+    name = get_base(*fastqs)
+    bam = bwa_mem(fastqs, name, ref_fasta, output_dir, num_cores)
     """
     name = "testing"
     bam = "tmp/NJ30-2041-72_S72_L001.bam"
-    #"""
+    """
     sam_out = open('{output_dir}/{name}.sam'.format(**locals()), 'w')
     bam3 = dedup_sam(dearm_bam(bam, mips), get_umi, sam_out, mips)
     sam_out.close()
@@ -392,7 +378,7 @@ def dedup_sam(sam_iter, get_umi_fn, out=sys.stdout, mips_file=''):
     for cpos, reads in groupby(sorted_iter, lambda r: (r.chrom, r.pos, get_umi_fn(r))):
         reads = list(reads)
 
-        if cpos[0] != "*":
+        if cpos[0] == "*":
             q += len(reads)
             j += len(reads)
             for r in reads:
@@ -411,10 +397,12 @@ def dedup_sam(sam_iter, get_umi_fn, out=sys.stdout, mips_file=''):
             if best.cigar != '*' and set([o.cigar for o in others if o.cigar != '*']) != set([best.cigar]):
                 print cpos, best.cigar, [o.cigar for o in others], best.is_first_read(), best.is_plus_read()
             """
+            if len(readset) == 0: continue
             # print the read with the highest quality
             counts.update([len(readset)])
             j += len(readset)
-            for ir, aln in enumerate(sorted(readset, key=attrgetter('mapq'))):
+            for ir, aln in enumerate(sorted(readset, key=attrgetter('mapq'),
+                reverse=True)):
                 if ir > 0:
                     aln.flag |= 0x400 # PCR or optical duplicate
                 print >>out, str(aln)
@@ -424,15 +412,21 @@ def dedup_sam(sam_iter, get_umi_fn, out=sys.stdout, mips_file=''):
 
 def bwa_mem(fastqs, name, ref_fasta, output_dir, num_cores):
     fq1, fq2 = fastqs
+
+    # use bwa's streaming stuff and interleaved fq so we dont write temporary
+    # fqs with barcode removed.
+    fn = __file__
+    fqbc = "'<python {fn} detag {fq1} {fq2}'".format(**locals())
+
     cmd = ("set -o pipefail && " # stolen from bcbio
-           "bwa mem -M -t {num_cores} -R {rg} -v 1 {ref_fasta} "
-           "{fq1} {fq2} "
+           "bwa mem -p -C -M -t {num_cores} -R {rg} -v 1 {ref_fasta} "
+           "{fqbc} "
            "| samtools view -b -S -u - "
            "| samtools sort -m 2G "
            "- {output_dir}/{name}")
 
     rg = "'@RG\\tID:%s\\tSM:%s'" % (name, name)
-    print >>sys.stderr, cmd
+    print >>sys.stderr, cmd.format(**locals())
     bam = "{output_dir}/{name}.bam".format(**locals())
 
     try:
@@ -454,6 +448,11 @@ def fqiter(fq, n=4):
             assert all(rec) and len(rec) == 4
             yield rec
 def main():
+
+    if sys.argv[1] == "detag":
+        sys.exit(move_tag(sys.argv[2], sys.argv[3]))
+
+
     p = argparse.ArgumentParser(description=__doc__,
                    formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--output-dir', help='output directory')
