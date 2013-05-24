@@ -213,11 +213,8 @@ def move_umi(fqs, output_dir):
     f1_out.close(); f2_out.close()
     return f1_out.name, f2_out.name
 
-def get_umi(read_name):
-    return read_name.rsplit(":", 1)[1]
-
-    cigs = [(int(x[0]), x[1]) for x in zip(diter, diter)]
-    return cigs
+def get_umi(read):
+    return next(o for o in read.other if o.startswith("BC:Z:"))
 
 def read_mips(mips_file):
     print >>sys.stderr, "reading", mips_file
@@ -264,20 +261,24 @@ def dearm_bam(bam, mips_file):
     for toks in bam_iter:
         yield "\t".join(toks)
 
-    bam_iter = reader("|samtools view {bam} -L region.bed".format(bam=bam), header=Bam)
+    bam_iter = reader("|samtools view {bam}".format(bam=bam), header=Bam)
     n = 0
     counts = [0, 0, 0, 0]
-    for aln in bam_iter:
-
-        oseq, oqual, ocigar, opos = aln.seq, aln.qual, aln.cigar, aln.pos
+    for k, aln in enumerate(bam_iter):
+        # put barcode in tags and remove from name
+        aln.read, bc = aln.read.rsplit(":", 1)
+        aln.other.append("BC:Z:%s" % bc)
 
         if not aln.is_mapped():
             yield str(aln)
             continue
+
+        oseq, oqual, ocigar, opos = aln.seq, aln.qual, aln.cigar, aln.pos
         assert aln.is_first_read() != aln.is_second_read()
         assert aln.is_plus_read() != aln.is_minus_read()
         first = right = second = False
 
+        idx = None
         if aln.is_first_read() and aln.is_minus_read():
             lookup_pair = aln.chrom, aln.right_end()
             lookup_field = "lig_probe_stop"
@@ -293,12 +294,11 @@ def dearm_bam(bam, mips_file):
             lookup_field = "lig_probe_start"
             idx = 2
 
-        if aln.is_second_read() and aln.is_minus_read():
-            lookup_field = "ext_probe_stop"
+        elif aln.is_second_read() and aln.is_minus_read():
             lookup_pair = aln.chrom, aln.right_end()
+            lookup_field = "ext_probe_stop"
             idx = 3
 
-        aln.other.append("XO:Z:%s" % oseq)
         # allow some wiggle room
         for offset in [0, -1, 1]:
             mips[lookup_field]
@@ -310,19 +310,20 @@ def dearm_bam(bam, mips_file):
                 #print mip['probe_strand'], ['+', '-'][int(aln.is_minus_read())], aln.is_first_read()
                 break
             except KeyError:
-                aln.flag |= 0x200 # not passing QC
-                yield str(aln)
+                # check next position.
                 continue
         else:
             aln.flag |= 0x200 # not passing QC
             yield str(aln)
             continue
 
-        aln.other.append("BC:Z:%s" % aln.read.rsplit(":", 1)[1])
-        aln.other.append("OC:Z:%s" % aln.cigar)
-        aln.other.append("OP:i:%i" % aln.pos)
+        aln.other.extend([
+            "OP:i:%i" % aln.pos,
+            "XI:i:%s" % mip['>index'],
+            "XO:Z:%s" % oseq,
+            "OC:Z:%s" % aln.cigar,
+            ])
 
-        aln.other.append("XI:i:%s" % mip['>index'])
         lig_len = mip['lig_probe_stop'] - mip['lig_probe_start']
         ext_len = mip['ext_probe_stop'] - mip['ext_probe_start']
 
@@ -331,13 +332,11 @@ def dearm_bam(bam, mips_file):
                 aln.trim(lig_len, ext_len)
             else:
                 aln.flag |= 0x200 # not passing QC
-                pass
         elif idx in (0, 1):
             if mip['ext_probe_start'] < mip['ext_probe_stop'] < mip['lig_probe_start'] < mip['lig_probe_stop']:
                 aln.trim(ext_len, lig_len)
             else:
                 aln.flag |= 0x200 # not passing QC
-                pass
 
         if len(aln.seq) < 20: # weird cigar like 120S28M
             aln.seq, aln.qual, aln.cigar, aln.pos = oseq, oqual, ocigar, opos
@@ -346,11 +345,7 @@ def dearm_bam(bam, mips_file):
 
     print >>sys.stderr, "found %i MIPs" % n
     print >>sys.stderr, "counts", counts
-
-from string import maketrans
-def revcomp(seq, tbl=maketrans('ACGT', 'TGCA')):
-    return seq.translate(tbl)
-
+    print >>sys.stderr, "total reads", k
 
 def bwamips(fastqs, ref_fasta, mips, output_dir, num_cores=NUM_CORES,
         umi_fn=move_umi):
@@ -369,12 +364,14 @@ def bwamips(fastqs, ref_fasta, mips, output_dir, num_cores=NUM_CORES,
     bam3 = dedup_sam(dearm_bam(bam, mips), get_umi, sam_out, mips)
     sam_out.close()
 
-def dedup_sam(sam_iter, umi_fn, out=sys.stdout, mips_file=''):
+def dedup_sam(sam_iter, get_umi_fn, out=sys.stdout, mips_file=''):
     # first print the header
     line = None
+    j = 0
     for line in sam_iter:
         if not line.startswith("@"):
             break
+        j += 1
         print >>out, line
 
     args = " ".join(sys.argv)
@@ -389,7 +386,7 @@ def dedup_sam(sam_iter, umi_fn, out=sys.stdout, mips_file=''):
     #sam_iter_ = chain([Bam(line.split("\t"))], (Bam(x.strip().split("\t")) for x in sam_iter))
     sam_iter_ = (Bam(x.strip().split("\t")) for x in sam_iter)
     for cpos, reads in groupby(sam_iter_, lambda r: (r.chrom, r.pos)):
-        ureads = sorted((r.is_first_read(), umi_fn(r.read), r) for r in reads)
+        ureads = sorted((r.is_first_read(), get_umi_fn(r), r) for r in reads)
 
         # group to reads with the same umi at that position
         for umi, umi_group in groupby(ureads, key=itemgetter(0)):
@@ -408,7 +405,9 @@ def dedup_sam(sam_iter, umi_fn, out=sys.stdout, mips_file=''):
                 if i > 0:
                     aln.flag |= 0x400 # PCR or optical duplicate
                 print >>out, str(aln)
+                j += 1
     print >>sys.stderr, counts.most_common(20)
+    print >>sys.stderr, "wrote %i reads" % j
 
 def bwa_mem(fastqs, name, ref_fasta, output_dir, num_cores):
     fq1, fq2 = fastqs
