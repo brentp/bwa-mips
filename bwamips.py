@@ -135,6 +135,11 @@ class Bam(object):
             else:
                 self.trim_left(left_trim)
                 self.trim_right(right_trim)
+        if self.cigar.startswith("0M"):
+            self.cigar = self.cigar[2:]
+        # 0M, but not 10M
+        if self.cigar.endswith("0M") and not self.cigar[-3].isdigit():
+            self.cigar = self.cigar[:-2]
 
     def trim_left(self, n_bp):
         cigs = [list(x) for x in self.cigs()]
@@ -425,7 +430,7 @@ def bwa_mem(fastqs, name, ref_fasta, output_dir, num_cores):
            "| samtools sort -m 2G "
            "- {output_dir}/{name}")
 
-    rg = "'@RG\\tID:%s\\tSM:%s'" % (name, name)
+    rg = "'@RG\\tID:%s\\tSM:%s\\tPL:illumina'" % (name, name)
     print >>sys.stderr, cmd.format(**locals())
     bam = "{output_dir}/{name}.bam".format(**locals())
 
