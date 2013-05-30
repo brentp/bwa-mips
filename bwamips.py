@@ -180,7 +180,7 @@ class Bam(object):
 
         self.cigar = "".join("%i%s" % tuple(t) for t in new_cigs[::-1])
 
-def get_base(fq1, fq2, _again=True):
+def get_base_name(fq1, fq2, _again=True):
     def base(f):
         return op.basename(f).replace('.gz', '')\
                 .replace('.fastq', '').replace('.fq', '')
@@ -191,7 +191,7 @@ def get_base(fq1, fq2, _again=True):
     if name.endswith("_R"): name = name[:-2]
     if len(name) < 3 and _again:
         print >>sys.stderr, "flipping", name
-        return get_base(base(fq1)[::-1], base(fq2)[::-1], False)
+        return get_base_name(base(fq1)[::-1], base(fq2)[::-1], False)
     name = (name if _again else name[::-1]).lstrip("._-")
     return name
 
@@ -212,8 +212,6 @@ def move_tag(fq1, fq2):
         assert not any("\n" in l for l in r2)
         print "\n".join(r1)
         print "\n".join(r2)
-
-    return 0
 
 def get_umi(read):
     return next(o for o in read.other if o.startswith("BC:Z:"))
@@ -348,7 +346,7 @@ def dearm_bam(bam, mips_file):
 def bwamips(fastqs, ref_fasta, mips, output_dir, num_cores=NUM_CORES):
 
     #"""
-    name = get_base(*fastqs)
+    name = get_base_name(*fastqs)
     bam = bwa_mem(fastqs, name, ref_fasta, output_dir, num_cores)
     """
     name = "testing"
@@ -357,6 +355,13 @@ def bwamips(fastqs, ref_fasta, mips, output_dir, num_cores=NUM_CORES):
     sam_out = open('{output_dir}/{name}.sam'.format(**locals()), 'w')
     bam3 = dedup_sam(dearm_bam(bam, mips), get_umi, sam_out, mips)
     sam_out.close()
+    sam, bam_prefix = sam_out.name, sam_out.name[:-4]
+
+    # sam to bam and index.
+    subprocess.check_call('samtools view -bS {sam} \
+            | samtools sort -m 1G - {bam_prefix}'.format(**locals()), shell=True)
+    subprocess.check_call('samtools index {bam}.bam && rm {sam}'\
+            .format(bam=bam_prefix, sam=sam), shell=True)
 
 def dedup_sam(sam_iter, get_umi_fn, out=sys.stdout, mips_file=''):
     # first print the header
@@ -428,11 +433,11 @@ def bwa_mem(fastqs, name, ref_fasta, output_dir, num_cores):
            "{fqbc} "
            "| samtools view -b -S -u - "
            "| samtools sort -m 2G "
-           "- {output_dir}/{name}")
+           "- {output_dir}/{name}.mips")
 
     rg = "'@RG\\tID:%s\\tSM:%s\\tPL:illumina'" % (name, name)
     print >>sys.stderr, cmd.format(**locals())
-    bam = "{output_dir}/{name}.bam".format(**locals())
+    bam = "{output_dir}/{name}.mips.bam".format(**locals())
 
     try:
         subprocess.check_call(cmd.format(**locals()), shell=True)
@@ -452,11 +457,11 @@ def fqiter(fq, n=4):
             if not rec: raise StopIteration
             assert all(rec) and len(rec) == 4
             yield rec
+
 def main():
 
     if sys.argv[1] == "detag":
         sys.exit(move_tag(sys.argv[2], sys.argv[3]))
-
 
     p = argparse.ArgumentParser(description=__doc__,
                    formatter_class=argparse.RawDescriptionHelpFormatter)
