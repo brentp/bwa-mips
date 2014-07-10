@@ -21,11 +21,17 @@ bpederse@gmail.com
 
 LICENSE is MIT
 """
+__version__ = "0.1.1"
 
 import sys
 import os
 import os.path as op
-from itertools import izip, islice, groupby, takewhile
+from itertools import islice, groupby, takewhile
+try:
+    from itertools import izip
+except ImportError: #py3
+    izip = zip
+
 from operator import attrgetter
 from collections import Counter
 import subprocess
@@ -33,10 +39,8 @@ from math import copysign
 
 import argparse
 from toolshed import reader, nopen
-import multiprocessing
 
 
-NUM_CORES=multiprocessing.cpu_count()
 BARCODE_LENGTH = 5
 MAX_READ_LENGTH = 152
 VERSION = 0.1
@@ -85,7 +89,7 @@ class Bam(object):
            raise StopIteration
        cig_iter = groupby(self.cigar, lambda c: c.isdigit())
        for g, n in cig_iter:
-           yield int("".join(n)), "".join(cig_iter.next()[1])
+           yield int("".join(n)), "".join(next(cig_iter)[1])
 
     @classmethod
     def cig_len(self, cigs):
@@ -184,12 +188,12 @@ def get_base_name(fq1, fq2, _again=True):
         return op.basename(f).replace('.gz', '')\
                 .replace('.fastq', '').replace('.fq', '')
 
-    name = "".join([x[0] for x in takewhile(lambda (a, b): a == b, \
+    name = "".join([x[0] for x in takewhile(lambda ab: ab[0] == ab[1], \
                                            zip(base(fq1), base(fq2)))])
     name = name.rstrip("_")
     if name.endswith("_R"): name = name[:-2]
     if len(name) < 3 and _again:
-        print >>sys.stderr, "flipping", name
+        sys.stderr.write("flipping: %s\n" % name)
         return get_base_name(base(fq1)[::-1], base(fq2)[::-1], False)
     name = (name if _again else name[::-1]).lstrip("._-")
     return name
@@ -209,14 +213,14 @@ def move_tag(fq1, fq2):
         r2[0] = r2[0].split(" ", 1)[0] + " BC:Z:" + umi
         assert not any("\n" in l for l in r1)
         assert not any("\n" in l for l in r2)
-        print "\n".join(r1)
-        print "\n".join(r2)
+        print("\n".join(r1))
+        print("\n".join(r2))
 
 def get_umi(read):
     return next(o for o in read.other if o.startswith("BC:Z:"))
 
 def read_mips(mips_file):
-    print >>sys.stderr, "reading", mips_file
+    sys.stderr.write("reading %s\n" % mips_file)
     m = {'ext_probe_start':{}, 'lig_probe_start':{},
          'ext_probe_stop':{}, 'lig_probe_stop':{}}
     ss = m.keys()
@@ -339,10 +343,10 @@ def dearm_bam(bam, mips_file):
             aln.flag |= 0x200 # not passing QC
         yield str(aln)
 
-    print >>sys.stderr, "found %i MIPs" % n
-    print >>sys.stderr, "counts", counts
+    sys.stderr.write("found %i MIPs\n" % n)
+    sys.stderr.write("counts %s\n" % counts)
 
-def bwamips(fastqs, ref_fasta, mips, output_dir, num_cores=NUM_CORES):
+def bwamips(fastqs, ref_fasta, mips, output_dir, num_cores):
 
     #"""
     name = get_base_name(*fastqs)
@@ -369,13 +373,14 @@ def dedup_sam(sam_iter, get_umi_fn, out=sys.stdout, mips_file=''):
     for line in sam_iter:
         if not line.startswith("@"):
             break
-        print >>out, line
+        out.write(line + "\n")
 
     args = " ".join(sys.argv)
-    print >>out, '@PG\tID:bwamips\tPN:bwamips.py\tCL:%s\tVN:%s' \
-                % (args, VERSION)
-    print >>out, '@CO\tXI:i tag indicates the >index of the mip from %s' % mips_file
-    print >>out, '@CO\tXO:Z tag indicates the original, mapped sequence'
+    out.write('@PG\tID:bwamips\tPN:bwamips.py\tCL:%s\tVN:%s\n' \
+                % (args, VERSION))
+    out.write('@CO\tXI:i tag indicates the >index of the mip from %s\n' %
+            mips_file)
+    out.write('@CO\tXO:Z tag indicates the original, mapped sequence\n')
 
     # group to reads at same position.
     counts = Counter()
@@ -391,7 +396,7 @@ def dedup_sam(sam_iter, get_umi_fn, out=sys.stdout, mips_file=''):
             q += len(reads)
             j += len(reads)
             for r in reads:
-                print >>out, r
+                out.write(str(r) + '\n')
             continue
 
         reads1 = [r for r in reads if r.is_first_read()]
@@ -414,10 +419,10 @@ def dedup_sam(sam_iter, get_umi_fn, out=sys.stdout, mips_file=''):
                 reverse=True)):
                 if ir > 0:
                     aln.flag |= 0x400 # PCR or optical duplicate
-                print >>out, str(aln)
+                out.write(str(aln) + "\n")
 
-    print >>sys.stderr, counts.most_common(20)
-    print >>sys.stderr, "wrote %i reads" % j
+    sys.stderr.write(str(counts.most_common(20)) + "\n")
+    sys.stderr.write("wrote %i reads\n" % j)
 
 def bwa_mem(fastqs, name, ref_fasta, output_dir, num_cores):
     fq1, fq2 = fastqs
@@ -430,17 +435,15 @@ def bwa_mem(fastqs, name, ref_fasta, output_dir, num_cores):
     cmd = ("set -o pipefail && " # stolen from bcbio
            "bwa mem -p -C -M -t {num_cores} -R {rg} -v 1 {ref_fasta} "
            "{fqbc} "
-           "| samtools view -b -S -u - "
-           "| samtools sort -m 2G "
-           "- {output_dir}/{name}.mips")
+           "| samtools view -b -S -u - > {output_dir}/{name}.mips.bam")
 
     rg = "'@RG\\tID:%s\\tSM:%s\\tPL:illumina'" % (name, name)
-    print >>sys.stderr, cmd.format(**locals())
+    sys.stderr.write(cmd.format(**locals()) + "\n")
     bam = "{output_dir}/{name}.mips.bam".format(**locals())
 
     try:
         subprocess.check_call(cmd.format(**locals()), shell=True)
-    except Exception, e:
+    except Exception as e:
         try:
             os.unlink(bam)
         except OSError:
@@ -465,22 +468,25 @@ def main():
     p = argparse.ArgumentParser(description=__doc__,
                    formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--output-dir', help='output directory')
+    p.add_argument('--threads', help='number of threads for bwa mem',
+            default=2, type=int)
     p.add_argument('ref_fasta', help='reference fasta already index by bwa 0.7.4+')
     p.add_argument('mips', help='mips file')
-    p.add_argument('fastqs', nargs=2, metavar=('FQ1', 'FQ2'))
+    p.add_argument('fastqs', nargs=2, metavar=('FASTQ'))
     args = p.parse_args()
 
     for f in (args.ref_fasta, args.mips, args.fastqs[0], args.fastqs[1],
               args.ref_fasta + ".sa"):
         if not op.exists(f):
-            print >>sys.stderr, "%s missing" % f
+            sys.stderr.write("%s missing\n" % f)
             sys.exit(not p.print_help())
 
     args.output_dir = op.abspath(op.expanduser(args.output_dir))
     if not op.exists(args.output_dir):
         os.makedirs(args.output_dir)
 
-    bwamips(args.fastqs, args.ref_fasta, args.mips, args.output_dir)
+    bwamips(args.fastqs, args.ref_fasta, args.mips, args.output_dir,
+            args.threads)
 
 if __name__ == "__main__":
     import doctest
