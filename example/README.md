@@ -4,7 +4,7 @@ This example will run through using `bwamips.py` on the example
 fastqs in this directory and chromosome 6 from UCSC.
 
 TLDR
-++++
+----
 
     python ../bwamips.py results/ $REF mips-design.txt $R1 $R2 > res.sam
 
@@ -17,7 +17,7 @@ Data
 We have an example mips design file with mips for chromosome 6.
 
 Design File
-+++++++++++
+-----------
 
 ```Shell
 $ head mips-design.txt
@@ -40,7 +40,7 @@ reference to which you align are from the same genome assembly!.
 
 
 Prepare Reference Fasta
-+++++++++++++++++++++++
+-----------------------
 
 For this example, we will download only chr6 since we know that's
 where our MIPs are designed for but in practice one should always
@@ -60,7 +60,7 @@ cd ..
 ```
 
 Run bwamips
-+++++++++++
+-----------
 
 
 ```Shell
