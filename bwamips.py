@@ -25,9 +25,8 @@ LICENSE is MIT
 import sys
 import os
 import os.path as op
-import string
-from itertools import izip, islice, groupby, takewhile, chain
-from operator import itemgetter, attrgetter
+from itertools import izip, islice, groupby, takewhile
+from operator import attrgetter
 from collections import Counter
 import subprocess
 from math import copysign
@@ -460,7 +459,7 @@ def fqiter(fq, n=4):
 
 def main():
 
-    if sys.argv[1] == "detag":
+    if len(sys.argv) > 1 and sys.argv[1] == "detag":
         sys.exit(move_tag(sys.argv[2], sys.argv[3]))
 
     p = argparse.ArgumentParser(description=__doc__,
@@ -468,7 +467,7 @@ def main():
     p.add_argument('--output-dir', help='output directory')
     p.add_argument('ref_fasta', help='reference fasta already index by bwa 0.7.4+')
     p.add_argument('mips', help='mips file')
-    p.add_argument('fastqs', nargs=2, metavar=('FQ1 FQ2'))
+    p.add_argument('fastqs', nargs=2, metavar=('FQ1', 'FQ2'))
     args = p.parse_args()
 
     for f in (args.ref_fasta, args.mips, args.fastqs[0], args.fastqs[1],
