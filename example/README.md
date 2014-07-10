@@ -6,7 +6,7 @@ fastqs in this directory and chromosome 6 from UCSC.
 TLDR
 ----
 
-    python ../bwamips.py results/ $REF mips-design.txt $R1 $R2 > res.sam
+    python ../bwamips.py $REF mips-design.txt $R1 $R2 > res.sam
 
 And see the `run.sh` in this directory
 
@@ -70,7 +70,7 @@ R2=sample-202-20_S30_L001_R2_001.fastq.gz
 
 mkdir -p results/
 # now map the reads. (note that python2.7+ and python3 are supported)
-python3 ../bwamips.py results/ ref/$REF mips-design.txt $R1 $R2 --threads 16 \
+python3 ../bwamips.py ref/$REF mips-design.txt $R1 $R2 --threads 16 \
                    | samtools view -bS - | samtools sort - results/sample
 
 samtools flagstat results/sample.bam
