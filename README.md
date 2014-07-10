@@ -4,7 +4,7 @@ bwa-mips
 Map sequence from Molecular Inversion Probes with BWA, strip arms, de-dup, ..., profit
 
 
-`python ../bwamips.py --output-dir results/ $REF mips-design.txt $R1 $R2`
+`python ../bwamips.py $REF mips-design.txt $R1 $R2` > $SAM
 
 
 
@@ -21,7 +21,7 @@ strips that ligation and extension arms from the alignment, adjusts the
 position, cigar, sequence, and quality accounting (more or less) for
 insertions, deletions, and masked sequence.
 
-The output is in SAM format to "output-dir" with extra tags as described
+The output is in SAM format with extra tags as described
 in the @CO headers.
 
 Thanks to Evan Boyle and Jay Hesselberth for (repeated) explanations.

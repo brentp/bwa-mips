@@ -11,10 +11,10 @@ strips that ligation and extension arms from the alignment, adjusts the
 position, cigar, sequence, and quality accounting (more or less) for
 insertions, deletions, and masked sequence.
 
-The output is in SAM format to "output-dir" with extra tags as described
+The output is in SAM format to stdout with extra tags as described
 in the @CO headers.
 
-Thanks to Evan Boyle and Jay HesselBerth for (repeated) explanations
+Thanks to Evan Boyle and Jay Hesselberth for (repeated) explanations
 Any mistakes are my own.
 
 bpederse@gmail.com
@@ -25,6 +25,8 @@ __version__ = "0.1.1"
 
 import sys
 import os
+from tempfile import mktemp
+import atexit
 import os.path as op
 from itertools import islice, groupby, takewhile
 try:
@@ -346,25 +348,24 @@ def dearm_bam(bam, mips_file):
     sys.stderr.write("found %i MIPs\n" % n)
     sys.stderr.write("counts %s\n" % counts)
 
-def bwamips(fastqs, ref_fasta, mips, output_dir, num_cores):
+def rm(f):
+    try: os.unlink(f)
+    except: pass
+
+def bwamips(fastqs, ref_fasta, mips, num_cores):
 
     #"""
+    tmp_bam_name = mktemp()
+    atexit.register(rm, (tmp_bam_name,))
     name = get_base_name(*fastqs)
-    bam = bwa_mem(fastqs, name, ref_fasta, output_dir, num_cores)
+    bam = bwa_mem(fastqs, name, ref_fasta, tmp_bam_name, num_cores)
     """
     name = "testing"
-    bam = "tmp/NJ30-2041-72_S72_L001.bam"
+    bam = "example/results/sample-202-20_S30_L001.bam"
     """
-    sam_out = open('{output_dir}/{name}.sam'.format(**locals()), 'w')
-    bam3 = dedup_sam(dearm_bam(bam, mips), get_umi, sam_out, mips)
-    sam_out.close()
-    sam, bam_prefix = sam_out.name, sam_out.name[:-4]
+    sam_out = sys.stdout
+    dedup_sam(dearm_bam(bam, mips), get_umi, sam_out, mips)
 
-    # sam to bam and index.
-    subprocess.check_call('samtools view -bS {sam} \
-            | samtools sort -m 1G - {bam_prefix}'.format(**locals()), shell=True)
-    subprocess.check_call('samtools index {bam}.bam && rm {sam}'\
-            .format(bam=bam_prefix, sam=sam), shell=True)
 
 def dedup_sam(sam_iter, get_umi_fn, out=sys.stdout, mips_file=''):
     # first print the header
@@ -424,7 +425,7 @@ def dedup_sam(sam_iter, get_umi_fn, out=sys.stdout, mips_file=''):
     sys.stderr.write(str(counts.most_common(20)) + "\n")
     sys.stderr.write("wrote %i reads\n" % j)
 
-def bwa_mem(fastqs, name, ref_fasta, output_dir, num_cores):
+def bwa_mem(fastqs, name, ref_fasta, tmp_bam_name, num_cores):
     fq1, fq2 = fastqs
 
     # use bwa's streaming stuff and interleaved fq so we dont write temporary
@@ -435,11 +436,10 @@ def bwa_mem(fastqs, name, ref_fasta, output_dir, num_cores):
     cmd = ("set -o pipefail && " # stolen from bcbio
            "bwa mem -p -C -M -t {num_cores} -R {rg} -v 1 {ref_fasta} "
            "{fqbc} "
-           "| samtools view -b -S -u - > {output_dir}/{name}.mips.bam")
+           "| samtools view -b -S -u - > {tmp_bam_name}")
 
     rg = "'@RG\\tID:%s\\tSM:%s\\tPL:illumina'" % (name, name)
     sys.stderr.write(cmd.format(**locals()) + "\n")
-    bam = "{output_dir}/{name}.mips.bam".format(**locals())
 
     try:
         subprocess.check_call(cmd.format(**locals()), shell=True)
@@ -449,7 +449,7 @@ def bwa_mem(fastqs, name, ref_fasta, output_dir, num_cores):
         except OSError:
             pass
         raise e
-    return bam
+    return tmp_bam_name
 
 def fqiter(fq, n=4):
     with nopen(fq) as fh:
@@ -467,7 +467,6 @@ def main():
 
     p = argparse.ArgumentParser(description=__doc__,
                    formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument('--output-dir', help='output directory')
     p.add_argument('--threads', help='number of threads for bwa mem',
             default=2, type=int)
     p.add_argument('ref_fasta', help='reference fasta already index by bwa 0.7.4+')
@@ -481,12 +480,7 @@ def main():
             sys.stderr.write("%s missing\n" % f)
             sys.exit(not p.print_help())
 
-    args.output_dir = op.abspath(op.expanduser(args.output_dir))
-    if not op.exists(args.output_dir):
-        os.makedirs(args.output_dir)
-
-    bwamips(args.fastqs, args.ref_fasta, args.mips, args.output_dir,
-            args.threads)
+    bwamips(args.fastqs, args.ref_fasta, args.mips, args.threads)
 
 if __name__ == "__main__":
     import doctest
