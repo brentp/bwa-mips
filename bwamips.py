@@ -14,12 +14,12 @@ insertions, deletions, and masked sequence.
 The output is in SAM format to "output-dir" with extra tags as described
 in the @CO headers.
 
-Thanks to Evan Boyle and Jay HesselBerth for (repeated) explainations
+Thanks to Evan Boyle and Jay HesselBerth for (repeated) explanations
 Any mistakes are my own.
 
 bpederse@gmail.com
 
-LICENSE is BSD
+LICENSE is MIT
 """
 
 import sys
