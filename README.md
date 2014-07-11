@@ -13,7 +13,7 @@ ligation and extension arms, along with a molecular tag (AKA UMI).
 This script takes:
 
     1) ref.fasta
-    2) mips design file
+    2) mips design file (likely from MIPgen)
     3) de-multiplxed, paired-end fastqs
 
 and moves the UMI into the read-name, aligns the reads using bwa mem,

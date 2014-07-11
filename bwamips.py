@@ -3,7 +3,7 @@ With molecular inversion probes, we map reads to the genome that include the
 ligation and extension arms, along with a molecular tag (AKA UMI).
 This script takes:
     1) ref.fasta
-    2) mips design file
+    2) mips design file (likely from MIPgen)
     3) de-multiplxed, paired-end fastqs
 
 and moves the UMI into the read-name, aligns the reads using bwa mem,
@@ -73,7 +73,6 @@ from toolshed import reader, nopen
 
 __version__ = "0.1.4"
 
-BARCODE_LENGTH = 5
 MAX_READ_LENGTH = 152
 
 class Bam(object):
@@ -229,15 +228,14 @@ def get_base_name(fq1, fq2, _again=True):
     name = (name if _again else name[::-1]).lstrip("._-")
     return name
 
-def move_tag(fq1, fq2):
+def move_tag(fq1, fq2, umi_len):
 
-    # NOTE: umi hard-coded to 5 bases.
     for r1, r2 in izip(fqiter(fq1), fqiter(fq2)):
         assert len(r1) == 4
         assert len(r2) == 4
-        umi = r2[1][:5]
-        r2[1] = r2[1][5:]
-        r2[3] = r2[3][5:]
+        umi = r2[1][:umi_len]
+        r2[1] = r2[1][umi_len:]
+        r2[3] = r2[3][umi_len:]
 
         # use bwa's comment stuff to send this to the alignment.
         r1[0] = r1[0].split(" ", 1)[0] + " BC:Z:" + umi
@@ -374,7 +372,7 @@ def dearm_bam(bam, mips_file):
 
         aln.other.extend([
             "OP:i:%i" % aln.pos,
-            "XI:i:%s" % mip['>index'],
+            "XI:i:%s" % mip.get('>index', mip.get('>mip_key')),
             "XO:Z:%s" % oseq,
             "OC:Z:%s" % aln.cigar,
             ])
@@ -418,11 +416,11 @@ def mktemp(*args, **kwargs):
     return f
 
 
-def bwamips(fastqs, ref_fasta, mips, num_cores):
+def bwamips(fastqs, ref_fasta, mips, num_cores, umi_length):
 
     tmp_bam_name = mktemp()
     name = get_base_name(*fastqs)
-    bam = bwa_mem(fastqs, name, ref_fasta, tmp_bam_name, num_cores)
+    bam = bwa_mem(fastqs, name, ref_fasta, tmp_bam_name, num_cores, umi_length)
     sam_out = sys.stdout
     dedup_sam(dearm_bam(bam, mips), get_umi, sam_out, mips)
 
@@ -438,7 +436,7 @@ def dedup_sam(sam_iter, get_umi_fn, out=sys.stdout, mips_file=''):
     args = " ".join(sys.argv)
     out.write('@PG\tID:bwamips\tPN:bwamips.py\tCL:%s\tVN:%s\n' \
                 % (args, __version__))
-    out.write('@CO\tXI:i tag indicates the >index of the mip from %s\n' %
+    out.write('@CO\tXI:i tag indicates the >index or >mip_key of the mip from %s\n' %
             mips_file)
     out.write('@CO\tXO:Z tag indicates the original, mapped sequence\n')
 
@@ -483,13 +481,13 @@ def dedup_sam(sam_iter, get_umi_fn, out=sys.stdout, mips_file=''):
     sys.stderr.write(str(counts.most_common(20)) + "\n")
     sys.stderr.write("wrote %i reads\n" % j)
 
-def bwa_mem(fastqs, name, ref_fasta, tmp_bam_name, num_cores):
+def bwa_mem(fastqs, name, ref_fasta, tmp_bam_name, num_cores, umi_length):
     fq1, fq2 = fastqs
 
     # use bwa's streaming stuff and interleaved fq so we dont write temporary
     # fqs with barcode removed.
     fn = __file__
-    fqbc = "'<python {fn} detag {fq1} {fq2}'".format(**locals())
+    fqbc = "'<python {fn} detag {fq1} {fq2} {umi_length}'".format(**locals())
 
     cmd = ("bwa mem -p -C -M -t {num_cores} -R {rg} -v 1 {ref_fasta} "
            "{fqbc} "
@@ -517,14 +515,15 @@ def fqiter(fq, n=4):
 def main():
 
     if len(sys.argv) > 1 and sys.argv[1] == "detag":
-        sys.exit(move_tag(sys.argv[2], sys.argv[3]))
+        sys.exit(move_tag(sys.argv[2], sys.argv[3], int(sys.argv[4])))
 
     p = argparse.ArgumentParser(description=__doc__,
                    formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--threads', help='number of threads for bwa mem',
             default=2, type=int)
+    p.add_argument('--umi-length', help='length of umi', default=5, type=int)
     p.add_argument('ref_fasta', help='reference fasta already index by bwa 0.7.4+')
-    p.add_argument('mips', help='mips file')
+    p.add_argument('mips', help='mips design file. e.g. from MIPgen')
     p.add_argument('fastqs', nargs=2, metavar=('FASTQ'))
     args = p.parse_args()
 
@@ -534,7 +533,7 @@ def main():
             sys.stderr.write("%s missing\n" % f)
             sys.exit(not p.print_help())
 
-    bwamips(args.fastqs, args.ref_fasta, args.mips, args.threads)
+    bwamips(args.fastqs, args.ref_fasta, args.mips, args.threads, args.umi_length)
 
 if __name__ == "__main__":
     import doctest

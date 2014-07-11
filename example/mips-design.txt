@@ -1,4 +1,4 @@
->index	chr	ext_probe_start	ext_probe_stop	lig_probe_start	lig_probe_stop
+>mip_key	chr	ext_probe_start	ext_probe_stop	lig_probe_start	lig_probe_stop
 1	chr6	7541629	7541648	7541756	7541780
 2	chr6	7541900	7541921	7542029	7542051
 3	chr6	7541535	7541556	7541664	7541686
