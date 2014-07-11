@@ -497,8 +497,7 @@ def bwa_mem(fastqs, name, ref_fasta, tmp_bam_name, num_cores):
     fn = __file__
     fqbc = "'<python {fn} detag {fq1} {fq2}'".format(**locals())
 
-    cmd = ("set -o pipefail && " # stolen from bcbio
-           "bwa mem -p -C -M -t {num_cores} -R {rg} -v 1 {ref_fasta} "
+    cmd = ("bwa mem -p -C -M -t {num_cores} -R {rg} -v 1 {ref_fasta} "
            "{fqbc} "
            "| samtools view -b -S -u - > {tmp_bam_name}")
 
