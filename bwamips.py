@@ -21,7 +21,7 @@ bpederse@gmail.com
 
 LICENSE is MIT
 """
-from __future__ import print_function
+from __future__ import print_function, division
 
 REPORT = """
 ================
@@ -71,7 +71,7 @@ from math import copysign
 import argparse
 from toolshed import reader, nopen
 
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 
 BARCODE_LENGTH = 5
 MAX_READ_LENGTH = 152
