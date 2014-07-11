@@ -67,7 +67,7 @@ see the example/ directory.
 Report
 ======
 
-`bwamips.py` outputs a report it looks like this for the example dataset
+`bwamips.py` outputs a report. It looks like this for the example dataset.
 
     ================
     Alignment Report
