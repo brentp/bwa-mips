@@ -43,7 +43,7 @@ FOLD ENRICHMENT
 ===============
 low - high: {lo_enrich:.2f} - {hi_enrich:.2f}
 
-Low estimate uses unmapped reads that same as off-target.
+Low estimate uses unmapped reads as well as off-target.
 
 % READS ON TARGET
 =================
@@ -420,20 +420,14 @@ def mktemp(*args, **kwargs):
 
 def bwamips(fastqs, ref_fasta, mips, num_cores):
 
-    #"""
     tmp_bam_name = mktemp()
     name = get_base_name(*fastqs)
     bam = bwa_mem(fastqs, name, ref_fasta, tmp_bam_name, num_cores)
-    """
-    name = "testing"
-    bam = "example/results/sample-202-20_S30_L001.bam"
-    """
     sam_out = sys.stdout
     dedup_sam(dearm_bam(bam, mips), get_umi, sam_out, mips)
 
 
 def dedup_sam(sam_iter, get_umi_fn, out=sys.stdout, mips_file=''):
-    # first print the header
     line = None
     j = 0
     for line in sam_iter:

@@ -88,7 +88,7 @@ Report
     ===============
     low - high: 1618.52 - 3085.97
 
-    Low estimate uses unmapped reads that same as off-target.
+    Low estimate uses unmapped reads as well as off-target.
 
     % READS ON TARGET
     =================
