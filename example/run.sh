@@ -1,4 +1,4 @@
-set -ex
+set -exo pipefail
 
 REF=chr6.fa
 
@@ -20,6 +20,7 @@ fi
 R1=sample-202-20_S30_L001_R1_001.fastq.gz
 R2=sample-202-20_S30_L001_R2_001.fastq.gz
 
+mkdir -p results
 rm -f results/*
 # now map the reads.
 python3 ../bwamips.py ref/$REF mips-design.txt $R1 $R2 --threads 16 \
