@@ -56,6 +56,7 @@ import os
 import tempfile
 import atexit
 import os.path as op
+import errno
 
 from itertools import islice, groupby, takewhile
 try:
@@ -319,7 +320,7 @@ def dearm_bam(bam, mips_file):
     n = 0
     counts = [0, 0, 0, 0]
     stats = {'unmapped': 0, 'mip': 0, 'off-target': 0}
-    for k, aln in enumerate(bam_iter):
+    for aln in bam_iter:
         if not aln.is_mapped():
             yield str(aln)
             stats['unmapped'] += 1
@@ -418,7 +419,7 @@ def mktemp(*args, **kwargs):
 
 def bwamips(fastqs, ref_fasta, mips, num_cores, umi_length):
 
-    tmp_bam_name = mktemp()
+    tmp_bam_name = mktemp(suffix=".bam")
     name = get_base_name(*fastqs)
     bam = bwa_mem(fastqs, name, ref_fasta, tmp_bam_name, num_cores, umi_length)
     sam_out = sys.stdout
@@ -514,8 +515,14 @@ def fqiter(fq, n=4):
 
 def main():
 
+    # this subcommand is called internally by the main, user-visible script.
     if len(sys.argv) > 1 and sys.argv[1] == "detag":
-        sys.exit(move_tag(sys.argv[2], sys.argv[3], int(sys.argv[4])))
+        try:
+            move_tag(sys.argv[2], sys.argv[3], int(sys.argv[4]))
+        except IOError as e:
+            if e.errno != errno.EPIPE:
+                raise
+        sys.exit(0)
 
     p = argparse.ArgumentParser(description=__doc__,
                    formatter_class=argparse.RawDescriptionHelpFormatter)
