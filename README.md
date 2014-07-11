@@ -63,3 +63,34 @@ Example
 =======
 
 see the example/ directory.
+
+Report
+======
+
+`bwamips.py` outputs a report it looks like this for the example dataset
+
+    ================
+    Alignment Report
+    ================
+
+    Bases in genome: 171,115,067
+    Bases in target region: 85,128 (0.0497% of genome)
+
+
+    MIPs found: 13,636
+    Off-target reads: 8,882
+    Unmapped reads: 8,053
+
+    Observed / expected enrichment where expected is based on size
+    of target region relative to size of genome.
+
+    FOLD ENRICHMENT
+    ===============
+    low - high: 1618.52 - 3085.97
+
+    Low estimate uses unmapped reads that same as off-target.
+
+    % READS ON TARGET
+    =================
+    80.52%
+
