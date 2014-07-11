@@ -386,7 +386,6 @@ def dedup_sam(sam_iter, get_umi_fn, out=sys.stdout, mips_file=''):
     # group to reads at same position.
     counts = Counter()
     # add back the last line
-    #sam_iter_ = chain([Bam(line.split("\t"))], (Bam(x.strip().split("\t")) for x in sam_iter))
     sorted_iter = sorted([Bam(x.strip().split("\t")) for x in sam_iter],
                         key=lambda r: (r.chrom, r.pos, get_umi_fn(r)))
     q = 0
@@ -444,10 +443,7 @@ def bwa_mem(fastqs, name, ref_fasta, tmp_bam_name, num_cores):
     try:
         subprocess.check_call(cmd.format(**locals()), shell=True)
     except Exception as e:
-        try:
-            os.unlink(bam)
-        except OSError:
-            pass
+        rm(tmp_bam_name)
         raise e
     return tmp_bam_name
 
