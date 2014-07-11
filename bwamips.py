@@ -21,13 +21,42 @@ bpederse@gmail.com
 
 LICENSE is MIT
 """
-__version__ = "0.1.1"
+from __future__ import print_function
+
+REPORT = """
+================
+Alignment Report
+================
+
+Bases in genome: {genome_size:,}
+Bases in target region: {target_size:,} ({target_ratio_pct:.4f}% of genome)
+
+
+MIPs found: {mip:,}
+Off-target reads: {off-target:,}
+Unmapped reads: {unmapped:,}
+
+Observed / expected enrichment where expected is based on size
+of target region relative to size of genome.
+
+FOLD ENRICHMENT
+===============
+low - high: {lo_enrich:.2f} - {hi_enrich:.2f}
+
+Low estimate uses unmapped reads that same as off-target.
+
+% READS ON TARGET
+=================
+{on_target:.2f}%
+
+"""
 
 import sys
 import os
-from tempfile import mktemp
+import tempfile
 import atexit
 import os.path as op
+
 from itertools import islice, groupby, takewhile
 try:
     from itertools import izip
@@ -42,10 +71,10 @@ from math import copysign
 import argparse
 from toolshed import reader, nopen
 
+__version__ = "0.1.3"
 
 BARCODE_LENGTH = 5
 MAX_READ_LENGTH = 152
-VERSION = 0.1
 
 class Bam(object):
     __slots__ = 'read flag chrom pos mapq cigar chrom_mate pos_mate tlen \
@@ -235,6 +264,20 @@ def read_mips(mips_file):
         m['ext_probe_stop'][(d['chr'], int(d['ext_probe_stop']))] = d
     return m
 
+def target_size_from_mips(mips, pad=0):
+    tmp = open(mktemp(suffix=".bed"), "w")
+    for k in mips: # ext/lig_probe_start/stop
+        for (chrom, pos), d in mips[k].items():
+            posns = [int(d[p]) for p in "ext_probe_start ext_probe_stop lig_probe_start lig_probe_stop".split()]
+            tmp.write("%s\t%i\t%i\n" % \
+                       (chrom, max(0, min(posns) - pad), max(posns) + pad))
+    tmp.close()
+    size = 0
+    for toks in reader("|sort -k1,1 -k2,2n %s | bedtools merge " % tmp.name,
+            header=False):
+        size += int(toks[2]) - int(toks[1])
+    return size
+
 def dearm_bam(bam, mips_file):
     """
     targetting arms:
@@ -261,23 +304,32 @@ def dearm_bam(bam, mips_file):
 
     """
     mips = read_mips(mips_file)
+    target_size = target_size_from_mips(mips)
 
     bam_iter = reader("|samtools view -H {bam}".format(bam=bam), header=False)
+
+    # calculcate genome size from bam header
+    genome_size = 0
     for toks in bam_iter:
+        if toks[0].startswith("@SQ"):
+            genome_size += next(int(x.split(":")[1]) for x in toks if x.startswith("LN:"))
         yield "\t".join(toks)
+
+    target_ratio_pct = 100.0 * target_size / genome_size
 
     bam_iter = reader("|samtools view {bam}".format(bam=bam), header=Bam)
     n = 0
     counts = [0, 0, 0, 0]
+    stats = {'unmapped': 0, 'mip': 0, 'off-target': 0}
     for k, aln in enumerate(bam_iter):
         if not aln.is_mapped():
             yield str(aln)
+            stats['unmapped'] += 1
             continue
 
         oseq, oqual, ocigar, opos = aln.seq, aln.qual, aln.cigar, aln.pos
         assert aln.is_first_read() != aln.is_second_read()
         assert aln.is_plus_read() != aln.is_minus_read()
-        first = right = second = False
 
         idx = None
         if aln.is_first_read() and aln.is_minus_read():
@@ -316,6 +368,7 @@ def dearm_bam(bam, mips_file):
                 continue
         else:
             aln.flag |= 0x200 # not passing QC
+            stats['off-target'] += 1
             yield str(aln)
             continue
 
@@ -344,19 +397,31 @@ def dearm_bam(bam, mips_file):
             aln.seq, aln.qual, aln.cigar, aln.pos = oseq, oqual, ocigar, opos
             aln.flag |= 0x200 # not passing QC
         yield str(aln)
+        stats['mip'] += 1
 
-    sys.stderr.write("found %i MIPs\n" % n)
-    sys.stderr.write("counts %s\n" % counts)
+    hi_enrich = (stats['mip'] / stats['off-target']) / (target_size / genome_size)
+    lo_enrich = (stats['mip'] / (stats['unmapped'] + stats['off-target'])) / (target_size / genome_size)
+
+    on_target = 100.0 * (stats['mip'] / (stats['unmapped'] + stats['off-target']))
+
+    info = locals()
+    info.update(stats)
+    print(REPORT.format(**info), file=sys.stderr)
 
 def rm(f):
     try: os.unlink(f)
     except: pass
 
+def mktemp(*args, **kwargs):
+    f = tempfile.mktemp(*args, **kwargs)
+    atexit.register(rm, f)
+    return f
+
+
 def bwamips(fastqs, ref_fasta, mips, num_cores):
 
     #"""
     tmp_bam_name = mktemp()
-    atexit.register(rm, (tmp_bam_name,))
     name = get_base_name(*fastqs)
     bam = bwa_mem(fastqs, name, ref_fasta, tmp_bam_name, num_cores)
     """
@@ -378,7 +443,7 @@ def dedup_sam(sam_iter, get_umi_fn, out=sys.stdout, mips_file=''):
 
     args = " ".join(sys.argv)
     out.write('@PG\tID:bwamips\tPN:bwamips.py\tCL:%s\tVN:%s\n' \
-                % (args, VERSION))
+                % (args, __version__))
     out.write('@CO\tXI:i tag indicates the >index of the mip from %s\n' %
             mips_file)
     out.write('@CO\tXO:Z tag indicates the original, mapped sequence\n')
