@@ -67,7 +67,6 @@ except ImportError: #py3
 from operator import attrgetter
 from collections import Counter
 import subprocess
-from math import copysign
 
 import argparse
 import toolshed as ts
@@ -224,11 +223,11 @@ def dearm_bam(bam, mips_file):
     mips = read_mips(mips_file)
     target_size = target_size_from_mips(mips)
 
-    bam_iter = ts.reader("|samtools view -H {bam}".format(bam=bam), header=False)
+    bam_header_iter = ts.reader("|samtools view -H {bam}".format(bam=bam), header=False)
 
     # calculcate genome size from bam header
     genome_size = 0
-    for toks in bam_iter:
+    for toks in bam_header_iter:
         if toks[0].startswith("@SQ"):
             genome_size += next(int(x.split(":")[1]) for x in toks if x.startswith("LN:"))
         yield "\t".join(toks)
@@ -240,6 +239,7 @@ def dearm_bam(bam, mips_file):
     counts = [0, 0, 0, 0]
     stats = {'unmapped': 0, 'mip': 0, 'off-target': 0}
     for aln in bam_iter:
+
         if not aln.is_mapped():
             yield str(aln)
             stats['unmapped'] += 1
@@ -310,16 +310,18 @@ def dearm_bam(bam, mips_file):
             else:
                 aln.flag |= 0x200 # not passing QC
 
-        if len(aln.seq) < 20: # weird cigar like 120S28M
-            aln.seq, aln.qual, aln.cigar, aln.pos = oseq, oqual, ocigar, opos
-            aln.flag |= 0x200 # not passing QC
+        #if len(aln.seq) < 20: # weird cigar like 120S28M
+        #    aln.seq, aln.qual, aln.cigar, aln.pos = oseq, oqual, ocigar, opos
+        #    aln.flag |= 0x200 # not passing QC
         yield str(aln)
         stats['mip'] += 1
 
-    hi_enrich = (stats['mip'] / stats['off-target']) / (target_size / genome_size)
-    lo_enrich = (stats['mip'] / (stats['unmapped'] + stats['off-target'])) / (target_size / genome_size)
-
-    on_target = 100.0 * (stats['mip'] / (stats['unmapped'] + stats['off-target']))
+    try:
+        hi_enrich = (stats['mip'] / stats['off-target']) / (target_size / genome_size)
+        lo_enrich = (stats['mip'] / (stats['unmapped'] + stats['off-target'])) / (target_size / genome_size)
+        on_target = 100.0 * (stats['mip'] / (stats['unmapped'] + stats['off-target']))
+    except ZeroDivisionError:
+        hi_enrich = lo_enrich = on_target = 0
 
     info = locals()
     info.update(stats)
@@ -361,8 +363,9 @@ def dedup_sam(sam_iter, get_umi_fn, out=sys.stdout, mips_file=''):
     # group to reads at same position.
     counts = Counter()
     # add back the last line
-    sorted_iter = sorted([Bam(x.strip().split("\t")) for x in sam_iter],
-                        key=lambda r: (r.chrom, r.pos, get_umi_fn(r)))
+    sorted_iter = [Bam(x.strip().split("\t")) for x in sam_iter] \
+                + [Bam(line.strip().split("\t"))]
+    sorted_iter.sort(key=lambda r: (r.chrom, r.pos, get_umi_fn(r)))
     q = 0
     for cpos, reads in groupby(sorted_iter, lambda r: (r.chrom, r.pos, get_umi_fn(r))):
         reads = list(reads)
