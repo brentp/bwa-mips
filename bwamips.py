@@ -70,7 +70,8 @@ import subprocess
 from math import copysign
 
 import argparse
-from toolshed import reader, nopen
+import toolshed as ts
+from cigar import Cigar
 
 __version__ = "0.1.4"
 
@@ -86,6 +87,7 @@ class Bam(object):
         self.flag = int(self.flag)
         self.pos = int(self.pos)
         self.tlen = int(float(self.tlen))
+        self.cigar = Cigar(self.cigar)
         try:
             self.mapq = int(self.mapq)
         except ValueError:
@@ -114,21 +116,10 @@ class Bam(object):
     def is_mapped(self):
         return not (self.flag & 0x4)
 
-    def cigs(self):
-       if self.cigar == "*":
-           yield (0, None)
-           raise StopIteration
-       cig_iter = groupby(self.cigar, lambda c: c.isdigit())
-       for g, n in cig_iter:
-           yield int("".join(n)), "".join(next(cig_iter)[1])
-
-    @classmethod
-    def cig_len(self, cigs):
-        return sum(c[0] for c in cigs if c[1] in ("M", "D", "N", "EQ", "X", "P"))
-
     def right_end(self):
         # http://www.biostars.org/p/1680/#1682
-        length = sum(c[0] for c in self.cigs() if c[1] in ("M", "D", "N", "EQ", "X", "P"))
+        length = sum(c[0] for c in self.cigar.items() if c[1] in
+                            self.cigar.ref_consuming_ops)
         return self.start + length - 1
 
     @property
@@ -139,80 +130,8 @@ class Bam(object):
     def len(self):
         return abs(self.tlen)
 
-
-    def trim(self, left_trim, right_trim):
-        if "M" == "".join(c for c in self.cigar if not c.isdigit()):
-            #assert len(self.seq) + 1 == self.tlen, (len(self.seq), self.tlen,
-            #        self.seq, self.cigar)
-            self.seq = self.seq[left_trim:-right_trim]
-            self.qual = self.qual[left_trim:-right_trim]
-            self.tlen = copysign(len(self.seq), self.tlen)
-            self.cigar = "%iM" % self.len
-            self.pos += left_trim
-
-        else:
-            cigs = [list(x) for x in self.cigs()]
-            if cigs[0][1] == "M" and cigs[0][0] >= left_trim and \
-               cigs[-1][1] == "M" and cigs[-1][0] >= right_trim:
-                self.seq = self.seq[left_trim:-right_trim]
-                self.qual = self.qual[left_trim:-right_trim]
-                tlen = self.len - left_trim - right_trim
-                self.tlen = copysign(tlen, self.tlen)
-                cigs[0][0] -= left_trim
-                cigs[-1][0] -= right_trim
-                self.cigar = "".join("%i%s" % tuple(t) for t in cigs)
-                self.pos += left_trim
-            elif sum(c[0] for c in cigs if c[1] == "S") \
-                        > len(self.seq) - (left_trim + right_trim):
-                    self.mapq = 0
-                    self.flag |= 0x200
-            else:
-                self.trim_left(left_trim)
-                self.trim_right(right_trim)
-        if self.cigar.startswith("0M"):
-            self.cigar = self.cigar[2:]
-        # 0M, but not 10M
-        if self.cigar.endswith("0M") and not self.cigar[-3].isdigit():
-            self.cigar = self.cigar[:-2]
-
-    def trim_left(self, n_bp):
-        cigs = [list(x) for x in self.cigs()]
-        n = 0
-
-        new_cigs = cigs[:]
-        for i, (clen, cop) in enumerate(cigs):
-            if not cop in ("M", "I", "S", "EQ", "X"): continue
-            n += clen
-            if n >= n_bp:
-                new_cigs[i] = (n - n_bp, cop)
-                new_cigs = new_cigs[i:]
-                self.seq = self.seq[clen - (n - n_bp):]
-                self.qual = self.qual[clen - (n - n_bp):]
-                break
-            else:
-                self.seq = self.seq[clen:]
-                self.qual = self.qual[clen:]
-
-        self.pos += n_bp
-        self.cigar = "".join("%i%s" % tuple(t) for t in new_cigs)
-
-    def trim_right(self, n_bp):
-        cigs = [list(x) for x in self.cigs()][::-1]
-        new_cigs = cigs[:]
-        n = 0
-        for i, (clen, cop) in enumerate(cigs):
-            if not cop in ("M", "I", "S", "EQ", "X"): continue
-            if n >= n_bp:
-                new_cigs[i] = (n - n_bp, cop)
-                new_cigs = new_cigs[i:]
-                self.seq = self.seq[::-1][clen - (n - n_bp):][::-1]
-                self.qual = self.qual[::-1][clen - (n - n_bp):][::-1]
-                break
-            else:
-                self.seq = self.seq[::-1][clen:]
-                self.qual = self.qual[::-1][clen:]
-
-        self.cigar = "".join("%i%s" % tuple(t) for t in new_cigs[::-1])
+    def mask(self, left_mask, right_mask):
+        self.cigar = self.cigar.mask_left(left_mask).mask_right(right_mask)
 
 def get_base_name(fq1, fq2, _again=True):
     def base(f):
@@ -254,7 +173,7 @@ def read_mips(mips_file):
     m = {'ext_probe_start':{}, 'lig_probe_start':{},
          'ext_probe_stop':{}, 'lig_probe_stop':{}}
     ss = m.keys()
-    for d in reader(mips_file):
+    for d in ts.reader(mips_file):
         for key in ss:
             d[key] = int(d[key])
         m['ext_probe_start'][(d['chr'], int(d['ext_probe_start']))] = d
@@ -272,7 +191,7 @@ def target_size_from_mips(mips, pad=0):
                        (chrom, max(0, min(posns) - pad), max(posns) + pad))
     tmp.close()
     size = 0
-    for toks in reader("|sort -k1,1 -k2,2n %s | bedtools merge " % tmp.name,
+    for toks in ts.reader("|sort -k1,1 -k2,2n %s | bedtools merge " % tmp.name,
             header=False):
         size += int(toks[2]) - int(toks[1])
     return size
@@ -305,7 +224,7 @@ def dearm_bam(bam, mips_file):
     mips = read_mips(mips_file)
     target_size = target_size_from_mips(mips)
 
-    bam_iter = reader("|samtools view -H {bam}".format(bam=bam), header=False)
+    bam_iter = ts.reader("|samtools view -H {bam}".format(bam=bam), header=False)
 
     # calculcate genome size from bam header
     genome_size = 0
@@ -316,7 +235,7 @@ def dearm_bam(bam, mips_file):
 
     target_ratio_pct = 100.0 * target_size / genome_size
 
-    bam_iter = reader("|samtools view {bam}".format(bam=bam), header=Bam)
+    bam_iter = ts.reader("|samtools view {bam}".format(bam=bam), header=Bam)
     n = 0
     counts = [0, 0, 0, 0]
     stats = {'unmapped': 0, 'mip': 0, 'off-target': 0}
@@ -374,7 +293,6 @@ def dearm_bam(bam, mips_file):
         aln.other.extend([
             "OP:i:%i" % aln.pos,
             "XI:i:%s" % mip.get('>index', mip.get('>mip_key')),
-            "XO:Z:%s" % oseq,
             "OC:Z:%s" % aln.cigar,
             ])
 
@@ -383,12 +301,12 @@ def dearm_bam(bam, mips_file):
 
         if idx in (2, 3):
             if mip['lig_probe_start'] < mip['lig_probe_stop'] < mip['ext_probe_start'] < mip['ext_probe_stop']:
-                aln.trim(lig_len, ext_len)
+                aln.mask(lig_len, ext_len)
             else:
                 aln.flag |= 0x200 # not passing QC
         elif idx in (0, 1):
             if mip['ext_probe_start'] < mip['ext_probe_stop'] < mip['lig_probe_start'] < mip['lig_probe_stop']:
-                aln.trim(ext_len, lig_len)
+                aln.mask(ext_len, lig_len)
             else:
                 aln.flag |= 0x200 # not passing QC
 
@@ -439,7 +357,6 @@ def dedup_sam(sam_iter, get_umi_fn, out=sys.stdout, mips_file=''):
                 % (args, __version__))
     out.write('@CO\tXI:i tag indicates the >index or >mip_key of the mip from %s\n' %
             mips_file)
-    out.write('@CO\tXO:Z tag indicates the original, mapped sequence\n')
 
     # group to reads at same position.
     counts = Counter()
@@ -505,7 +422,7 @@ def bwa_mem(fastqs, name, ref_fasta, tmp_bam_name, num_cores, umi_length):
     return tmp_bam_name
 
 def fqiter(fq, n=4):
-    with nopen(fq) as fh:
+    with ts.nopen(fq) as fh:
         fqclean = (x.strip("\r\n") for x in fh if x.strip())
         while True:
             rec = [x for x in islice(fqclean, n)]
