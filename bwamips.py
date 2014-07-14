@@ -444,7 +444,8 @@ def dedup_sam(sam_iter, get_umi_fn, out=sys.stdout, mips_file=''):
     # group to reads at same position.
     counts = Counter()
     # add back the last line
-    sorted_iter = sorted([Bam(x.strip().split("\t")) for x in sam_iter],
+    sorted_iter = sorted([Bam(x.strip().split("\t")) for x in sam_iter] +
+                         [Bam(line.strip().split("\t"))],
                         key=lambda r: (r.chrom, r.pos, get_umi_fn(r)))
     q = 0
     for cpos, reads in groupby(sorted_iter, lambda r: (r.chrom, r.pos, get_umi_fn(r))):
