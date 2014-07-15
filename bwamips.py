@@ -272,7 +272,7 @@ def target_size_from_mips(mips, pad=0):
                        (chrom, max(0, min(posns) - pad), max(posns) + pad))
     tmp.close()
     size = 0
-    for toks in reader("|sort -k1,1 -k2,2n %s | bedtools merge " % tmp.name,
+    for toks in reader("|tail -n+2 %s | sort -k1,1 -k2,2n | bedtools merge -i stdin" % tmp.name,
             header=False):
         size += int(toks[2]) - int(toks[1])
     return size
