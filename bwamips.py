@@ -11,7 +11,7 @@ strips that ligation and extension arms from the alignment, adjusts the
 position, cigar, sequence, and quality accounting (more or less) for
 insertions, deletions, and masked sequence.
 
-The output is in SAM format to stdout with extra tags as described
+The output is in BAM format to stdout with extra tags as described
 in the @CO headers.
 
 Thanks to Evan Boyle and Jay Hesselberth for (repeated) explanations
