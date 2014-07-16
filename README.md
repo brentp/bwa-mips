@@ -4,7 +4,7 @@ bwa-mips
 Map sequence from Molecular Inversion Probes with BWA, strip arms, de-dup, ..., profit
 
 
-`python ../bwamips.py $REF mips-design.txt $R1 $R2` > $BAM
+`python ../bwamips.py --picard-dir picard-tools-1.117 $REF mips-design.txt $R1 $R2` > $BAM
 
 
 
@@ -56,6 +56,8 @@ Installation
      then install the toolshed module with pip as described above.
      
  + picard-tools
+   - download from: http://sourceforge.net/projects/picard/files/ and unzip
+   - or follow script in `example/run.sh`
      
  + bwa mem from: https://github.com/lh3/bwa
 
