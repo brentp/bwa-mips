@@ -58,7 +58,7 @@ import atexit
 import os.path as op
 import errno
 
-from itertools import islice, groupby, takewhile
+from itertools import islice, groupby, takewhile, chain
 try:
     from itertools import izip
 except ImportError: #py3
@@ -68,9 +68,10 @@ from operator import attrgetter
 from collections import Counter
 import subprocess
 from math import copysign
+from subprocess import Popen, PIPE
 
 import argparse
-from toolshed import reader, nopen
+import toolshed as ts
 
 __version__ = "0.1.4"
 
@@ -254,7 +255,7 @@ def read_mips(mips_file):
     m = {'ext_probe_start':{}, 'lig_probe_start':{},
          'ext_probe_stop':{}, 'lig_probe_stop':{}}
     ss = m.keys()
-    for d in reader(mips_file):
+    for d in ts.reader(mips_file):
         for key in ss:
             d[key] = int(d[key])
         m['ext_probe_start'][(d['chr'], int(d['ext_probe_start']))] = d
@@ -272,12 +273,12 @@ def target_size_from_mips(mips, pad=0):
                        (chrom, max(0, min(posns) - pad), max(posns) + pad))
     tmp.close()
     size = 0
-    for toks in reader("|tail -n+2 %s | sort -k1,1 -k2,2n | bedtools merge -i stdin" % tmp.name,
+    for toks in ts.reader("|tail -n+2 %s | sort -k1,1 -k2,2n | bedtools merge -i stdin" % tmp.name,
             header=False):
         size += int(toks[2]) - int(toks[1])
     return size
 
-def dearm_bam(bam, mips_file):
+def dearm_sam(sam_gz, mips_file):
     """
     targetting arms:
      lig is 5' of mip
@@ -305,22 +306,23 @@ def dearm_bam(bam, mips_file):
     mips = read_mips(mips_file)
     target_size = target_size_from_mips(mips)
 
-    bam_iter = reader("|samtools view -H {bam}".format(bam=bam), header=False)
+    sam_iter = ts.reader(sam_gz, header=False)
 
     # calculcate genome size from bam header
     genome_size = 0
-    for toks in bam_iter:
+    for toks in sam_iter:
+        if not toks[0].startswith("@"): break
         if toks[0].startswith("@SQ"):
             genome_size += next(int(x.split(":")[1]) for x in toks if x.startswith("LN:"))
         yield "\t".join(toks)
 
     target_ratio_pct = 100.0 * target_size / genome_size
 
-    bam_iter = reader("|samtools view {bam}".format(bam=bam), header=Bam)
+    sam_iter2 = chain([Bam(toks)], (Bam(t) for t in sam_iter))
     n = 0
     counts = [0, 0, 0, 0]
     stats = {'unmapped': 0, 'mip': 0, 'off-target': 0}
-    for aln in bam_iter:
+    for aln in sam_iter2:
         if not aln.is_mapped():
             yield str(aln)
             stats['unmapped'] += 1
@@ -416,14 +418,25 @@ def mktemp(*args, **kwargs):
     atexit.register(rm, f)
     return f
 
+def bwamips(fastqs, ref_fasta, mips, num_cores, umi_length, picard):
 
-def bwamips(fastqs, ref_fasta, mips, num_cores, umi_length):
-
-    tmp_bam_name = mktemp(suffix=".bam")
+    tmp_sam_name = mktemp(suffix=".sam.gz")
     name = get_base_name(*fastqs)
-    bam = bwa_mem(fastqs, name, ref_fasta, tmp_bam_name, num_cores, umi_length)
+    sam_gz = bwa_mem(fastqs, name, ref_fasta, tmp_sam_name, num_cores, umi_length)
     sam_out = sys.stdout
-    dedup_sam(dearm_bam(bam, mips), get_umi, sam_out, mips)
+    out = Popen("java -jar -Xmx2G {picard}/FixMateInformation.jar \
+            SO=coordinate I=/dev/stdin O=/dev/stdout".format(picard=picard),
+            stderr=sys.stderr,
+            stdout=sys.stdout, stdin=PIPE, shell=True)
+    if sys.version_info[0] > 2:
+        import io
+        out.stdin = io.TextIOWrapper(out.stdin)
+
+    sam_out = out.stdin
+    #
+    dedup_sam(dearm_sam(sam_gz, mips), get_umi, sam_out, mips)
+    sam_out.close()
+    out.wait()
 
 
 def dedup_sam(sam_iter, get_umi_fn, out=sys.stdout, mips_file=''):
@@ -483,7 +496,7 @@ def dedup_sam(sam_iter, get_umi_fn, out=sys.stdout, mips_file=''):
     sys.stderr.write(str(counts.most_common(20)) + "\n")
     sys.stderr.write("wrote %i reads\n" % j)
 
-def bwa_mem(fastqs, name, ref_fasta, tmp_bam_name, num_cores, umi_length):
+def bwa_mem(fastqs, name, ref_fasta, tmp_sam_name, num_cores, umi_length):
     fq1, fq2 = fastqs
 
     # use bwa's streaming stuff and interleaved fq so we dont write temporary
@@ -493,7 +506,7 @@ def bwa_mem(fastqs, name, ref_fasta, tmp_bam_name, num_cores, umi_length):
 
     cmd = ("bwa mem -p -C -M -t {num_cores} -R {rg} -v 1 {ref_fasta} "
            "{fqbc} "
-           "| samtools view -b -S -u - > {tmp_bam_name}")
+           "| gzip -c - > {tmp_sam_name}")
 
     rg = "'@RG\\tID:%s\\tSM:%s\\tPL:illumina'" % (name, name)
     sys.stderr.write(cmd.format(**locals()) + "\n")
@@ -501,12 +514,12 @@ def bwa_mem(fastqs, name, ref_fasta, tmp_bam_name, num_cores, umi_length):
     try:
         subprocess.check_call(cmd.format(**locals()), shell=True)
     except Exception as e:
-        rm(tmp_bam_name)
+        rm(tmp_sam_name)
         raise e
-    return tmp_bam_name
+    return tmp_sam_name
 
 def fqiter(fq, n=4):
-    with nopen(fq) as fh:
+    with ts.nopen(fq) as fh:
         fqclean = (x.strip("\r\n") for x in fh if x.strip())
         while True:
             rec = [x for x in islice(fqclean, n)]
@@ -530,6 +543,8 @@ def main():
     p.add_argument('--threads', help='number of threads for bwa mem',
             default=2, type=int)
     p.add_argument('--umi-length', help='length of umi', default=5, type=int)
+    p.add_argument('--picard-dir', help='path to picard directory',
+            required=True)
     p.add_argument('ref_fasta', help='reference fasta already index by bwa 0.7.4+')
     p.add_argument('mips', help='mips design file. e.g. from MIPgen')
     p.add_argument('fastqs', nargs=2, metavar=('FASTQ'))
@@ -541,7 +556,8 @@ def main():
             sys.stderr.write("%s missing\n" % f)
             sys.exit(not p.print_help())
 
-    bwamips(args.fastqs, args.ref_fasta, args.mips, args.threads, args.umi_length)
+    bwamips(args.fastqs, args.ref_fasta, args.mips, args.threads,
+            args.umi_length, args.picard_dir)
 
 if __name__ == "__main__":
     import doctest
