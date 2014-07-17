@@ -73,7 +73,7 @@ from subprocess import Popen, PIPE
 import argparse
 import toolshed as ts
 
-__version__ = "0.1.4"
+__version__ = "0.1.5"
 
 MAX_READ_LENGTH = 152
 
@@ -492,7 +492,7 @@ def dedup_sam(sam_iter, get_umi_fn, out=sys.stdout, mips_file=''):
                 if ir > 0:
                     aln.flag |= 0x400 # PCR or optical duplicate
                 out.write(str(aln) + "\n")
-
+    out.flush()
     sys.stderr.write(str(counts.most_common(20)) + "\n")
     sys.stderr.write("wrote %i reads\n" % j)
 
