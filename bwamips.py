@@ -403,7 +403,7 @@ def dearm_sam(sam_gz, mips_file):
     hi_enrich = (stats['mip'] / stats['off-target']) / (target_size / genome_size)
     lo_enrich = (stats['mip'] / (stats['unmapped'] + stats['off-target'])) / (target_size / genome_size)
 
-    on_target = 100.0 * (stats['mip'] / (stats['unmapped'] + stats['off-target']))
+    on_target = 100.0 * (stats['mip'] / (stats['mip'] + stats['unmapped'] + stats['off-target']))
 
     info = locals()
     info.update(stats)
