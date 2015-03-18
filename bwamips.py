@@ -424,8 +424,13 @@ def bwamips(fastqs, ref_fasta, mips, num_cores, umi_length, picard):
     name = get_base_name(*fastqs)
     sam_gz = bwa_mem(fastqs, name, ref_fasta, tmp_sam_name, num_cores, umi_length)
     sam_out = sys.stdout
-    out = Popen("java -jar -Xmx2G {picard}/FixMateInformation.jar \
-            SO=coordinate I=/dev/stdin O=/dev/stdout".format(picard=picard),
+    if op.exists("{picard}/FixMateInformation.jar".format(picard=picard)):
+        jar = "{picard}/FixMateInformation.jar"
+    else:
+        jar = "{picard}/picard.jar FixMateInformation"
+
+    out = Popen("java -jar -Xmx2G {jar} \
+            SO=coordinate I=/dev/stdin O=/dev/stdout".format(jar=jar.format(picard=picard)),
             stderr=sys.stderr,
             stdout=sys.stdout, stdin=PIPE, shell=True)
     if sys.version_info[0] > 2:
