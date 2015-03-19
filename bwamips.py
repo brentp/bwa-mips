@@ -415,7 +415,8 @@ def rm(f):
 
 def mktemp(*args, **kwargs):
     f = tempfile.mktemp(*args, **kwargs)
-    atexit.register(rm, f)
+    print(f)
+    #atexit.register(rm, f)
     return f
 
 def bwamips(fastqs, ref_fasta, mips, num_cores, umi_length, picard):
@@ -511,6 +512,7 @@ def bwa_mem(fastqs, name, ref_fasta, tmp_sam_name, num_cores, umi_length):
 
     cmd = ("bwa mem -p -C -M -t {num_cores} -R {rg} -v 1 {ref_fasta} "
            "{fqbc} "
+           "| grep -v '^@PG' "
            "| gzip -c - > {tmp_sam_name}")
 
     rg = "'@RG\\tID:%s\\tSM:%s\\tPL:illumina'" % (name, name)
