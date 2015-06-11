@@ -22,6 +22,7 @@ bpederse@gmail.com
 LICENSE is MIT
 """
 from __future__ import print_function, division
+from collections import defaultdict
 
 REPORT = """
 ================
@@ -74,8 +75,6 @@ import argparse
 import toolshed as ts
 
 __version__ = "0.1.5"
-
-MAX_READ_LENGTH = 152
 
 class Bam(object):
     __slots__ = 'read flag chrom pos mapq cigar chrom_mate pos_mate tlen \
@@ -228,7 +227,7 @@ def get_base_name(fq1, fq2, _again=True):
         sys.stderr.write("flipping: %s\n" % name)
         return get_base_name(base(fq1)[::-1], base(fq2)[::-1], False)
     name = (name if _again else name[::-1]).lstrip("._-")
-    return name
+    return name or "rg"
 
 def move_tag(fq1, fq2, umi_len):
 
@@ -278,7 +277,7 @@ def target_size_from_mips(mips, pad=0):
         size += int(toks[2]) - int(toks[1])
     return size
 
-def dearm_sam(sam_gz, mips_file):
+def dearm_sam(sam_gz, mips_file, read_length=151, umi_length=5):
     """
     targetting arms:
      lig is 5' of mip
@@ -320,6 +319,7 @@ def dearm_sam(sam_gz, mips_file):
 
     sam_iter2 = chain([Bam(toks)], (Bam(t) for t in sam_iter))
     n = 0
+    miss_counts = defaultdict(int)
     counts = [0, 0, 0, 0]
     stats = {'unmapped': 0, 'mip': 0, 'off-target': 0}
     for aln in sam_iter2:
@@ -334,12 +334,16 @@ def dearm_sam(sam_gz, mips_file):
 
         idx = None
         if aln.is_first_read() and aln.is_minus_read():
-            lookup_pair = aln.chrom, aln.right_end()
+            # NOTE: previous version used right_end()
+            lookup_pair = aln.chrom, aln.pos + read_length
             lookup_field = "lig_probe_stop"
             idx = 0
 
         elif aln.is_second_read() and aln.is_plus_read():
-            lookup_pair = aln.chrom, aln.pos
+            # NOTE: previous version of the mips design worked better with this
+            # commented out line:
+            #lookup_pair = aln.chrom, aln.pos
+            lookup_pair = aln.chrom, aln.pos - umi_length
             lookup_field = "ext_probe_start"
             idx = 1
 
@@ -349,9 +353,14 @@ def dearm_sam(sam_gz, mips_file):
             idx = 2
 
         elif aln.is_second_read() and aln.is_minus_read():
-            lookup_pair = aln.chrom, aln.right_end()
+            # NOTE: previous version of the mips design worked better with this
+            # commented out line:
+            #lookup_pair = aln.chrom, aln.right_end()
+            lookup_pair = aln.chrom, aln.pos + read_length
             lookup_field = "ext_probe_stop"
             idx = 3
+        else:
+            1/0
 
         # allow some wiggle room
         mip = None
@@ -367,8 +376,9 @@ def dearm_sam(sam_gz, mips_file):
             except KeyError:
                 # check next position.
                 continue
-        else:
-            aln.flag |= 0x200 # not passing QC
+        if mip is None:
+            miss_counts[idx] += 1
+            aln.flag |= 0x200  # not passing QC
             stats['off-target'] += 1
             yield str(aln)
             continue
@@ -384,15 +394,9 @@ def dearm_sam(sam_gz, mips_file):
         ext_len = mip['ext_probe_stop'] - mip['ext_probe_start']
 
         if idx in (2, 3):
-            if mip['lig_probe_start'] < mip['lig_probe_stop'] < mip['ext_probe_start'] < mip['ext_probe_stop']:
-                aln.trim(lig_len, ext_len)
-            else:
-                aln.flag |= 0x200 # not passing QC
+            aln.trim(lig_len, ext_len)
         elif idx in (0, 1):
-            if mip['ext_probe_start'] < mip['ext_probe_stop'] < mip['lig_probe_start'] < mip['lig_probe_stop']:
-                aln.trim(ext_len, lig_len)
-            else:
-                aln.flag |= 0x200 # not passing QC
+            aln.trim(ext_len, lig_len)
 
         if len(aln.seq) < 20: # weird cigar like 120S28M
             aln.seq, aln.qual, aln.cigar, aln.pos = oseq, oqual, ocigar, opos
@@ -404,6 +408,8 @@ def dearm_sam(sam_gz, mips_file):
     lo_enrich = (stats['mip'] / (stats['unmapped'] + stats['off-target'])) / (target_size / genome_size)
 
     on_target = 100.0 * (stats['mip'] / (stats['mip'] + stats['unmapped'] + stats['off-target']))
+    print("miss:", [miss_counts[i] for i in range(4)], file=sys.stderr)
+    print("hits:", counts, file=sys.stderr)
 
     info = locals()
     info.update(stats)
@@ -439,9 +445,21 @@ def bwamips(fastqs, ref_fasta, mips, num_cores, umi_length, picard):
 
     sam_out = out.stdin
     #
-    dedup_sam(dearm_sam(sam_gz, mips), get_umi, sam_out, mips)
+    read_length = get_read_length(fastqs[0])
+    print("using read-length:", read_length, file=sys.stderr)
+    dedup_sam(dearm_sam(sam_gz, mips, read_length=read_length, umi_length=umi_length), get_umi, sam_out, mips)
     sam_out.close()
     out.wait()
+
+def get_read_length(fq):
+    lens = []
+    for i, line in enumerate(ts.nopen(fq)):
+        if i % 4 == 1:
+            lens.append(len(line) -1)
+        if len(lens) > 100: break
+    assert len(set(lens)) == 1, ("don't trim reads before sending to bwa-mips", set(lens))
+    return lens[0]
+
 
 
 def dedup_sam(sam_iter, get_umi_fn, out=sys.stdout, mips_file=''):
