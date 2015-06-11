@@ -415,8 +415,7 @@ def rm(f):
 
 def mktemp(*args, **kwargs):
     f = tempfile.mktemp(*args, **kwargs)
-    print(f)
-    #atexit.register(rm, f)
+    atexit.register(rm, f)
     return f
 
 def bwamips(fastqs, ref_fasta, mips, num_cores, umi_length, picard):
