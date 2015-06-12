@@ -234,20 +234,24 @@ def move_tag(fq1, fq2, umi_len):
     for r1, r2 in izip(fqiter(fq1), fqiter(fq2)):
         assert len(r1) == 4
         assert len(r2) == 4
-        umi = r2[1][:umi_len]
-        r2[1] = r2[1][umi_len:]
-        r2[3] = r2[3][umi_len:]
+        if umi_len > 0:
+            umi = r2[1][:umi_len]
+            r2[1] = r2[1][umi_len:]
+            r2[3] = r2[3][umi_len:]
 
-        # use bwa's comment stuff to send this to the alignment.
-        r1[0] = r1[0].split(" ", 1)[0] + " BC:Z:" + umi
-        r2[0] = r2[0].split(" ", 1)[0] + " BC:Z:" + umi
-        assert not any("\n" in l for l in r1)
-        assert not any("\n" in l for l in r2)
+            # use bwa's comment stuff to send this to the alignment.
+            r1[0] = r1[0].split(" ", 1)[0] + " BC:Z:" + umi
+            r2[0] = r2[0].split(" ", 1)[0] + " BC:Z:" + umi
+            assert not any("\n" in l for l in r1)
+            assert not any("\n" in l for l in r2)
+        else:
+            r1[0] = r1[0].split(" ", 1)[0]
+            r2[0] = r2[0].split(" ", 1)[0]
         print("\n".join(r1))
         print("\n".join(r2))
 
 def get_umi(read):
-    return next(o for o in read.other if o.startswith("BC:Z:"))
+    return next((o for o in read.other if o.startswith("BC:Z:")), None)
 
 def read_mips(mips_file):
     sys.stderr.write("reading %s\n" % mips_file)
@@ -277,7 +281,7 @@ def target_size_from_mips(mips, pad=0):
         size += int(toks[2]) - int(toks[1])
     return size
 
-def dearm_sam(sam_gz, mips_file, read_length=151, umi_length=5):
+def dearm_sam(sam_gz, mips_file):
     """
     targetting arms:
      lig is 5' of mip
@@ -334,16 +338,13 @@ def dearm_sam(sam_gz, mips_file, read_length=151, umi_length=5):
 
         idx = None
         if aln.is_first_read() and aln.is_minus_read():
-            # NOTE: previous version used right_end()
-            lookup_pair = aln.chrom, aln.pos + read_length
+            lookup_pair = aln.chrom, aln.right_end()
             lookup_field = "lig_probe_stop"
             idx = 0
 
         elif aln.is_second_read() and aln.is_plus_read():
-            # NOTE: previous version of the mips design worked better with this
-            # commented out line:
-            #lookup_pair = aln.chrom, aln.pos
-            lookup_pair = aln.chrom, aln.pos - umi_length
+            lookup_pair = aln.chrom, aln.pos
+            #lookup_pair = aln.chrom, aln.pos - umi_length
             lookup_field = "ext_probe_start"
             idx = 1
 
@@ -353,10 +354,9 @@ def dearm_sam(sam_gz, mips_file, read_length=151, umi_length=5):
             idx = 2
 
         elif aln.is_second_read() and aln.is_minus_read():
-            # NOTE: previous version of the mips design worked better with this
             # commented out line:
-            #lookup_pair = aln.chrom, aln.right_end()
-            lookup_pair = aln.chrom, aln.pos + read_length
+            lookup_pair = aln.chrom, aln.right_end()
+            #lookup_pair = aln.chrom, aln.pos + read_length
             lookup_field = "ext_probe_stop"
             idx = 3
         else:
@@ -445,9 +445,9 @@ def bwamips(fastqs, ref_fasta, mips, num_cores, umi_length, picard):
 
     sam_out = out.stdin
     #
-    read_length = get_read_length(fastqs[0])
-    print("using read-length:", read_length, file=sys.stderr)
-    dedup_sam(dearm_sam(sam_gz, mips, read_length=read_length, umi_length=umi_length), get_umi, sam_out, mips)
+    #read_length = get_read_length(fastqs[0])
+    #print("using read-length:", read_length, file=sys.stderr)
+    dedup_sam(dearm_sam(sam_gz, mips), get_umi if umi_length > 0 else None, sam_out, mips)
     sam_out.close()
     out.wait()
 
@@ -476,6 +476,12 @@ def dedup_sam(sam_iter, get_umi_fn, out=sys.stdout, mips_file=''):
     out.write('@CO\tXI:i tag indicates the >index or >mip_key of the mip from %s\n' %
             mips_file)
     out.write('@CO\tXO:Z tag indicates the original, mapped sequence\n')
+
+    if get_umi_fn is None:
+        # hack to make a unique num for each read.
+        import itertools as it
+        cnt = it.count()
+        get_umi_fn = lambda read: str(cnt.next())
 
     # group to reads at same position.
     counts = Counter()
