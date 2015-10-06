@@ -75,24 +75,24 @@ Report
     Alignment Report
     ================
 
-    Bases in genome: 171,115,067
-    Bases in target region: 85,128 (0.0497% of genome)
+	Bases in genome: 171,115,067
+	Bases in target region: 85,128 (0.0497% of genome)
 
 
-    MIPs found: 13,636
-    Off-target reads: 8,882
-    Unmapped reads: 8,053
+	MIPs found: 1,407
+	Off-target reads: 849
+	Unmapped reads: 800
 
-    Observed / expected enrichment where expected is based on size
-    of target region relative to size of genome.
+	Observed / expected enrichment where expected is based on size
+	of target region relative to size of genome.
 
-    FOLD ENRICHMENT
-    ===============
-    low - high: 1618.52 - 3085.97
+	FOLD ENRICHMENT
+	===============
+	low - high: 1715.10 - 3331.21
 
-    Low estimate uses unmapped reads as well as off-target.
+	Low estimate uses unmapped reads as well as off-target.
 
-    % READS ON TARGET
-    =================
-    80.52%
+	% READS ON TARGET
+	=================
+	46.04%
 
