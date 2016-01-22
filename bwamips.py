@@ -385,7 +385,7 @@ def dearm_sam(sam_gz, mips_file):
 
         aln.other.extend([
             "OP:i:%i" % aln.pos,
-            "XI:i:%s" % mip.get('>index', mip.get('>mip_key')),
+            "XI:Z:%s" % mip.get('>index', mip.get('>mip_key')),
             "XO:Z:%s" % oseq,
             "OC:Z:%s" % aln.cigar,
             ])
@@ -472,7 +472,7 @@ def dedup_sam(sam_iter, get_umi_fn, out=sys.stdout, mips_file=''):
     args = " ".join(sys.argv)
     out.write('@PG\tID:bwamips\tPN:bwamips.py\tCL:%s\tVN:%s\n' \
                 % (args, __version__))
-    out.write('@CO\tXI:i tag indicates the >index or >mip_key of the mip from %s\n' %
+    out.write('@CO\tXI:Z tag indicates the >index or >mip_key of the mip from %s\n' %
             mips_file)
     out.write('@CO\tXO:Z tag indicates the original, mapped sequence\n')
 
