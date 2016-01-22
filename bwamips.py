@@ -414,6 +414,7 @@ def dearm_sam(sam_gz, mips_file):
     info = locals()
     info.update(stats)
     print(REPORT.format(**info), file=sys.stderr)
+    raise StopIteration
 
 def rm(f):
     try: os.unlink(f)
@@ -429,26 +430,24 @@ def bwamips(fastqs, ref_fasta, mips, num_cores, umi_length, picard):
     tmp_sam_name = mktemp(suffix=".sam.gz")
     name = get_base_name(*fastqs)
     sam_gz = bwa_mem(fastqs, name, ref_fasta, tmp_sam_name, num_cores, umi_length)
-    sam_out = sys.stdout
     if op.exists("{picard}/FixMateInformation.jar".format(picard=picard)):
         jar = "{picard}/FixMateInformation.jar"
     else:
         jar = "{picard}/picard.jar FixMateInformation"
 
     out = Popen("java -jar -Xmx2G {jar} \
-            SO=coordinate I=/dev/stdin O=/dev/stdout".format(jar=jar.format(picard=picard)),
+            SO=coordinate I=/dev/stdin O=/dev/stdout && sleep 4".format(jar=jar.format(picard=picard)),
             stderr=sys.stderr,
             stdout=sys.stdout, stdin=PIPE, shell=True)
     if sys.version_info[0] > 2:
         import io
         out.stdin = io.TextIOWrapper(out.stdin)
 
-    sam_out = out.stdin
-    #
-    #read_length = get_read_length(fastqs[0])
-    #print("using read-length:", read_length, file=sys.stderr)
-    dedup_sam(dearm_sam(sam_gz, mips), get_umi if umi_length > 0 else None, sam_out, mips)
-    sam_out.close()
+    dedup_sam(dearm_sam(sam_gz, mips), get_umi if umi_length > 0 else None,
+              out.stdin, mips)
+    out.stdin.flush()
+    out.stdin.close()
+    sys.stdout.flush()
     out.wait()
 
 def get_read_length(fq):
